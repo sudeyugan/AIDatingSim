@@ -1,0 +1,39 @@
+#include "ConfigManager.h"
+#include "json.hpp"
+#include <fstream>
+#include <iostream>
+
+using json = nlohmann::json;
+
+ConfigManager& ConfigManager::getInstance() {
+    static ConfigManager instance; // C++11 起保证局部静态变量初始化的线程安全
+    return instance;
+}
+
+bool ConfigManager::loadConfig(const std::string& filePath) {
+    std::ifstream file(filePath);
+    if (!file.is_open()) {
+        std::cerr << "[Error] 无法打开配置文件: " << filePath << std::endl;
+        return false;
+    }
+
+    try {
+        json j;
+        file >> j; // 将文件流解析为 JSON 对象
+        
+        if (j.contains("deepseek_api_key")) {
+            apiKey = j["deepseek_api_key"];
+            return true;
+        } else {
+            std::cerr << "[Error] config.json 中缺少 'deepseek_api_key' 字段！" << std::endl;
+            return false;
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "[Error] 解析 config.json 失败: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+std::string ConfigManager::getApiKey() const {
+    return apiKey;
+}

@@ -12,6 +12,7 @@ public:
     Player(std::string pName);
     
     // Getters
+    std::string getName() const;
     int getCharm() const;
     int getIntelligence() const;
     int getWealth() const;

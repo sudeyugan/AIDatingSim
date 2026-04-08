@@ -2,6 +2,7 @@
 
 Player::Player(std::string pName) : name(pName), charm(10), intelligence(10), wealth(10) {}
 
+std::string Player::getName() const { return name; }
 int Player::getCharm() const { return charm; }
 int Player::getIntelligence() const { return intelligence; }
 int Player::getWealth() const { return wealth; }

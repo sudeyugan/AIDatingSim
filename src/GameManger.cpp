@@ -35,11 +35,9 @@ void GameManager::processCommand(const std::string& command) {
             std::getline(std::cin, dialogue);
             
             // 获取 AI 回复
-            std::string reply = targetNPCs[0]->interact(dialogue);
+            std::string reply = targetNPCs[0]->interact(dialogue, *player);
             std::cout << targetNPCs[0]->getName() << " 回复: " << reply << std::endl;
-            
-            // 模拟好感度变化与时间流逝
-            targetNPCs[0]->changeAffection(5); 
+
             advanceTime();
         }
     } else if (action == "look") {

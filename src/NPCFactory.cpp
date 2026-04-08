@@ -16,8 +16,8 @@ std::shared_ptr<NPC> NPCFactory::createRandomNPC() {
     std::random_device rd;
     std::mt19937 gen(rd());
     
-    int nIdx = std::uniform_int_distribution<>(0, names.size() - 1)(gen);
-    int tIdx = std::uniform_int_distribution<>(0, traits.size() - 1)(gen);
-    int oIdx = std::uniform_int_distribution<>(0, occupations.size() - 1)(gen);
-    return createManualNPC(names[nIdx], traits[tIdx], occupations[oIdx]);
+    int nIdx = std::uniform_int_distribution<>(0, static_cast<int>(names.size()) - 1)(gen);
+    int tIdx = std::uniform_int_distribution<>(0, static_cast<int>(traits.size()) - 1)(gen);
+    int oIdx = std::uniform_int_distribution<>(0, static_cast<int>(occupations.size()) - 1)(gen);
+    return createManualNPC(names[nIdx], traits[tIdx], occupations[oIdx]); 
 }

@@ -4,19 +4,22 @@
 class Player {
 private:
     std::string name;
-    int charm;        // 魅力
-    int intelligence; // 才智
-    int wealth;       // 财富
+    std::string backstory; //玩家的背景故事/角色设定
+    int charm;        
+    int intelligence; 
+    int wealth;       
 
 public:
     Player(std::string pName);
     
     // Getters
     std::string getName() const;
+    std::string getBackstory() const; 
     int getCharm() const;
     int getIntelligence() const;
     int getWealth() const;
 
     // Setters / Modifiers
+    void setBackstory(const std::string& story); 
     void updateStats(int dCharm, int dInt, int dWealth);
 };

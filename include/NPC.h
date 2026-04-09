@@ -3,8 +3,14 @@
 #include <memory>
 #include <deque>
 #include "json.hpp"
+#include "Player.h"
 
 class Player;
+
+struct NPCResponse {
+    std::string reply;
+    bool trigger_event; // 是否呼叫 GM 触发事件
+};
 
 class NPC {
 private:
@@ -21,7 +27,7 @@ public:
     std::string generateDynamicSystemPrompt(const Player& player) const;
 
     // 与玩家交互 (接收玩家输入，返回 NPC 文本回复)
-    std::string interact(const std::string& playerInput, const Player& player);
+    NPCResponse interact(const std::string& playerInput, const Player& player);
 
     // 调用生图 API 生成角色立绘
     void generatePortraitAPI() const;

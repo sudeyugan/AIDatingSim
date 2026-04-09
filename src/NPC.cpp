@@ -29,23 +29,26 @@ std::string NPC::generateDynamicSystemPrompt(const Player& player) const {
     }
 
     promptBuilder << "\n【重要指令】\n"
-                  << "你必须严格以 JSON 格式输出，不要包含任何其他说明文字或 Markdown 标记。格式如下：\n"
+                  << "你必须严格以 JSON 格式输出，不要包含任何其他说明文字。格式如下：\n"
                   << "{\n"
                   << "  \"reply\": \"你的对话回复（扮演角色）\",\n"
-                  << "  \"affection_change\": 你对玩家这句话的好感度变化值（-5到+5之间的整数，根据玩家发言的得体程度决定）\n"
+                  << "  \"affection_change\": 好感度变化值（-5到+5的整数）,\n"
+                  << "  \"trigger_event\": true/false (核心逻辑：当且仅当话题结束陷入僵局、情绪到达高潮、或者你认为当前场景需要外部力量推进剧情时，设为 true，呼叫系统介入；正常聊天时必须为 false)\n"
                   << "}";
 
+    // 【将玩家背景注入给 AI
     promptBuilder << "\n【玩家当前面板信息】\n"
                   << "玩家名字：" << player.getName() << "\n"
+                  << "玩家背景设定：" << player.getBackstory() << "（请结合此背景对玩家产生特定的主观印象）\n" 
                   << "魅力值：" << player.getCharm() << "（影响你对ta外貌的初始判断）\n"
                   << "才智值：" << player.getIntelligence() << "（影响你们学术/深度交流的顺畅度）\n"
                   << "财富值：" << player.getWealth() << "（影响ta展现出的财力）\n"
-                  << "*注意：请根据你的人设性格，适当在字里行间对玩家的数值高低做出潜在的反应（例如势利眼会看重财富，慕强会看重才智）。但不要像机器人一样直接报数字。\n";
+                  << "*注意：请根据你的人设性格，结合玩家的背景和属性，适当在字里行间对玩家做出潜在的反应。但不要像机器人一样直接报数字。\n";
 
     return promptBuilder.str();
 }
 
-std::string NPC::interact(const std::string& playerInput, const Player& player) {
+NPCResponse NPC::interact(const std::string& playerInput, const Player& player) {
     std::string systemPrompt = generateDynamicSystemPrompt(player);
     
     // 1. 构建 messages 数组
@@ -101,6 +104,7 @@ std::string NPC::interact(const std::string& playerInput, const Player& player) 
             json aiResult = json::parse(aiContentStr);
             std::string reply = aiResult.value("reply", "……（沉默）");
             int affectionChange = aiResult.value("affection_change", 0);
+            bool triggerEvent = aiResult.value("trigger_event", false);
 
             // 将本次对话存入历史记录
             chatHistory.push_back({{"role", "user"}, {"content", playerInput}});
@@ -117,17 +121,17 @@ std::string NPC::interact(const std::string& playerInput, const Player& player) 
                 changeAffection(affectionChange);
             }
 
-            return reply;
+            return {reply, triggerEvent};
 
         } catch (const std::exception& e) {
-            return "[Error] API JSON 解析失败或不符合预期格式: " + std::string(e.what()) + "\n原始返回: " + res->body;
+            return {"[Error] API JSON 解析失败: " + std::string(e.what()), false};
         }
     } else {
         std::string errorMsg = res ? std::to_string(res->status) : "网络连接失败/超时";
         if(res && res->status != 200) {
             errorMsg += " - Body: " + res->body; 
         }
-        return "[Error] AI 通信失败: " + errorMsg;
+        return {"[Error] AI 通信失败: " + errorMsg, false};
     }
 }
 void NPC::generatePortraitAPI() const {

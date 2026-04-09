@@ -37,9 +37,6 @@ endif()
 # 5. 生成可执行文件 (包含游戏代码 + ImGui代码)
 add_executable(${PROJECT_NAME} ${SOURCES} ${IMGUI_SOURCES})
 
-# >>> 在这里为项目全局添加启用 OpenSSL 的宏定义 <<<
-target_compile_definitions(${PROJECT_NAME} PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
-
 # 6. 链接依赖库
 # 链接 GLFW 和 OpenGL
 target_link_libraries(${PROJECT_NAME} PRIVATE glfw)

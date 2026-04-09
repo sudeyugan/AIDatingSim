@@ -3,11 +3,17 @@
 #include "imgui_impl_opengl3.h"
 #include <GLFW/glfw3.h>
 #include <iostream>
+#define NOMINMAX 
 #include <windows.h>
 #include <future>   
 #include <chrono>
 #include "ProfileGenerator.h" 
 #include "Player.h"
+#include "ConfigManager.h"
+#include "NPC.h"
+#include <vector>
+#include "GameEvent.h"
+#include <algorithm>
 
 void SetupImGuiStyle() {
     ImGuiStyle& style = ImGui::GetStyle();
@@ -71,6 +77,11 @@ static void glfw_error_callback(int error, const char* description) {
 
 int main() {
     SetConsoleOutputCP(CP_UTF8);
+
+    if (!ConfigManager::getInstance().loadConfig("../config.json")) {
+        std::cerr << "[警告] 配置加载失败，请检查工程目录下是否存在 config.json" << std::endl;
+    }
+
     // 1. 初始化 GLFW
     glfwSetErrorCallback(glfw_error_callback);
     if (!glfwInit()) return 1;
@@ -116,16 +127,102 @@ int main() {
     std::future<CharacterProfile> futureProfile;  // 用于接收异步生成的结果
     bool isGeneratingNPC = false;                 // 标记是否正在生成中
 
+    std::unique_ptr<NPC> activeNPC = nullptr;       // 真正负责对话的 NPC 实例
+    std::vector<std::pair<std::string, std::string>> uiChatHistory; // UI 显示用的聊天记录：<发言者, 内容>
+    std::future<NPCResponse> futureReply;       // 异步等待 AI 的回复
+    bool isWaitingForReply = false;                 // 是否正在等待 AI 回复
+
+    // 重置人生的状态变量
+    std::future<std::pair<std::string, std::string>> futurePlayerProfile;
+    bool isGeneratingPlayer = false;
+
+    // 世界观相关变量
+    static char worldSettingBuf[256] = "现代日常都市"; // 支持玩家手动输入
+    std::future<std::string> futureWorldSetting;
+    bool isGeneratingWorld = false;
+
+    //  事件系统状态
+    std::future<GameEvent> futureEvent;
+    bool isGeneratingEvent = false;
+    GameEvent currentEvent;
+    bool isEventActive = false;
+
+
     // 4. 游戏主循环 (Render Loop)
     while (!glfwWindowShouldClose(window)) {
         // 处理各种输入事件 (鼠标、键盘)
         glfwPollEvents();
+
+        // 检查世界观生成是否完成
+        if (isWaitingForReply && futureReply.valid()) {
+            if (futureReply.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+                NPCResponse response = futureReply.get(); // 【修改】获取结构体
+                
+                uiChatHistory.push_back({activeNPC->getName(), response.reply}); 
+                isWaitingForReply = false;
+                
+                // ：NPC 觉得是时候推进剧情了！
+                if (response.trigger_event && !isEventActive) {
+                    isGeneratingEvent = true;
+                    
+                    std::string recentContext = "";
+                    int startIdx = std::max(0, (int)uiChatHistory.size() - 6);
+                    for (int i = startIdx; i < uiChatHistory.size(); ++i) {
+                        recentContext += uiChatHistory[i].first + ": " + uiChatHistory[i].second + "\n";
+                    }
+                    
+                    // 让 GM 根据上下文降下事件
+                    futureEvent = ProfileGenerator::generateRandomEventAsync(std::string(worldSettingBuf), mainPlayer, currentNPC, recentContext);
+                }
+            }
+        }
 
         if (isGeneratingNPC && futureProfile.valid()) {
             // wait_for 设置为 0 秒，意味着“只看一眼结果有没有好，没好就立刻继续往下走”
             if (futureProfile.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
                 currentNPC = futureProfile.get(); // 获取生成的角色档案
                 isGeneratingNPC = false;          // 结束生成状态
+
+                std::string complexPersona = "外貌：" + currentNPC.appearance + "。核心性格：" + currentNPC.personality_core + "。隐藏创伤/执念：" + currentNPC.hidden_trauma;
+                activeNPC = std::make_unique<NPC>(currentNPC.name, complexPersona);
+                
+                // 清空聊天记录，并加入系统提示
+                uiChatHistory.clear();
+                uiChatHistory.push_back({"系统", currentNPC.name + " 降临到了你的世界。"});
+            }
+        }
+
+        if (isGeneratingPlayer && futurePlayerProfile.valid()) {
+            if (futurePlayerProfile.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+                auto newProfile = futurePlayerProfile.get(); 
+                
+                // 覆盖当前主角设定
+                mainPlayer = Player(newProfile.first); 
+                mainPlayer.setBackstory(newProfile.second);
+                isGeneratingPlayer = false;          
+                
+                // 重置世界线
+                activeNPC = nullptr; 
+                currentNPC.is_generated = false;
+                uiChatHistory.clear();
+                uiChatHistory.push_back({"系统", "命运的齿轮开始转动，你以全新的身份 [" + mainPlayer.getName() + "] 降临这个世界。"});
+            }
+        }
+
+        // 检查事件是否生成完毕
+        if (isGeneratingEvent && futureEvent.valid()) {
+            if (futureEvent.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+                currentEvent = futureEvent.get();
+                isGeneratingEvent = false;
+                
+                if (currentEvent.is_valid) {
+                    isEventActive = true; // 进入事件模式
+                    // 将事件描述上屏
+                    uiChatHistory.push_back({"【GM 突发事件】", currentEvent.description});
+                    
+                    // 滚动条自动到底部（一个小优化，放在后续循环也会生效）
+                    ImGui::SetScrollHereY(1.0f);
+                }
             }
         }
 
@@ -167,10 +264,34 @@ int main() {
         // ----------------------------------------------------
         ImGui::BeginChild("InfoArea", ImVec2(0, ImGui::GetContentRegionAvail().y - bottom_height), true);
         
+        // 世界观设定 UI
+        ImGui::TextColored(ImVec4(0.8f, 0.6f, 0.8f, 1.0f), "【当前世界观】");
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 100);
+        ImGui::InputText("##WorldSetting", worldSettingBuf, IM_ARRAYSIZE(worldSettingBuf));
+        ImGui::SameLine();
+        
+        if (isGeneratingWorld) {
+            ImGui::BeginDisabled();
+            ImGui::Button("构思中...", ImVec2(80, 0));
+            ImGui::EndDisabled();
+        } else {
+            if (ImGui::Button("随机天意", ImVec2(80, 0))) {
+                isGeneratingWorld = true;
+                futureWorldSetting = ProfileGenerator::generateRandomWorldSettingAsync();
+            }
+        }
+        ImGui::Spacing();
+        ImGui::Separator();
+
         // 玩家与时间状态面板
-        ImGui::TextColored(ImVec4(0.3f, 0.7f, 0.9f, 1.0f), "--- 你的状态 ---");
-        ImGui::Text("❤️魅力: 10  📖才智: 10  💰财富: 10");
-        ImGui::Text("🕒当前时间: 早上");
+        ImGui::TextColored(ImVec4(0.3f, 0.7f, 0.9f, 1.0f), "--- 【%s】 的状态 ---", mainPlayer.getName().c_str());
+        if (isGeneratingPlayer) {
+            ImGui::Text("正在重塑灵魂...");
+        } else {
+            ImGui::TextWrapped("【身世】: %s", mainPlayer.getBackstory().c_str());
+        }
+        ImGui::Text("魅力: %d  才智: %d  财富: %d", mainPlayer.getCharm(), mainPlayer.getIntelligence(), mainPlayer.getWealth());
+        ImGui::Text("当前时间: 早上");
         ImGui::Separator();
         
         // NPC 状态面板
@@ -194,23 +315,30 @@ int main() {
             ImGui::Text("暂无角色。请点击下方按钮邂逅新的缘分。");
         }
         ImGui::Separator();
+
         // 聊天记录区 (独立子窗口，支持滚动)
         ImGui::Text("【对话记录】");
         ImGui::BeginChild("ChatHistory", ImVec2(0, 0), false, ImGuiWindowFlags_HorizontalScrollbar);
         
-        // 假数据测试排版
-        ImGui::TextWrapped("系统: 游戏初始化成功，你来到了一个陌生的十字路口。");
-        ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "你: 这是一个什么地方？");
-        ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.9f, 0.6f, 0.6f, 1.0f), "NPC: 连这里都不认识，真不知道你是怎么进来的。");
-        ImGui::Spacing();
+        //动态渲染真实聊天记录
+        for (const auto& chat : uiChatHistory) {
+            if (chat.first == "系统") {
+                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "[系统]: %s", chat.second.c_str());
+            } else if (chat.first == mainPlayer.getName()) {
+                ImGui::TextColored(ImVec4(0.5f, 0.7f, 0.9f, 1.0f), "你: %s", chat.second.c_str());
+            } else {
+                ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.6f, 1.0f), "%s: %s", chat.first.c_str(), chat.second.c_str());
+            }
+            ImGui::Spacing();
+        }
+
+        if (isWaitingForReply) {
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s 正在思考...", activeNPC->getName().c_str());
+        }
         
-        // 自动滚动到最底部的逻辑预留
         if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
             ImGui::SetScrollHereY(1.0f);
         }
-        
         ImGui::EndChild();
         ImGui::EndChild();
 
@@ -220,50 +348,78 @@ int main() {
         ImGui::Separator();
         ImGui::BeginChild("ActionArea", ImVec2(0, 0), false);
         
-        // 功能按钮排布
-        // 如果正在生成，按钮变成灰色禁用状态
+        // 顶部控制台：生成与重置按钮
         if (isGeneratingNPC) {
-            ImGui::BeginDisabled();
-            ImGui::Button("生成中...", ImVec2(100, 0));
-            ImGui::EndDisabled();
+            ImGui::BeginDisabled(); ImGui::Button("正在生成...", ImVec2(100, 0)); ImGui::EndDisabled();
         } else {
             if (ImGui::Button("邂逅新角色", ImVec2(100, 0))) {
                 isGeneratingNPC = true;
-                // 发起异步请求，不会阻塞主线程
-                futureProfile = ProfileGenerator::generateRandomProfileAsync();
+                futureProfile = ProfileGenerator::generateRandomProfileAsync(std::string(worldSettingBuf));
             }
         }
         ImGui::SameLine();
-        ImGui::SameLine();
-        if (ImGui::Button("打工 (+财富)", ImVec2(100, 0))) {
-            std::cout << "触发：打工" << std::endl;
+        if (isGeneratingPlayer) {
+            ImGui::BeginDisabled(); ImGui::Button("重塑中...", ImVec2(100, 0)); ImGui::EndDisabled();
+        } else {
+            if (ImGui::Button("重置人生", ImVec2(100, 0))) {
+                isGeneratingPlayer = true;
+                futurePlayerProfile = ProfileGenerator::generatePlayerProfileAsync(std::string(worldSettingBuf));
+            }
         }
         ImGui::SameLine();
-        if (ImGui::Button("读书 (+才智)", ImVec2(100, 0))) {
-            std::cout << "触发：读书" << std::endl;
-        }
 
         ImGui::Spacing();
 
-        // 对话输入框
-        static char inputBuf[512] = ""; // 用于存储玩家输入的字符数组
-        // 让输入框占据大部分宽度，右边留点位置给发送按钮
-        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 100); 
-        
-        // ImGuiInputTextFlags_EnterReturnsTrue 让我们按回车键也能发送
-        bool isEnterPressed = ImGui::InputText("##ChatInput", inputBuf, IM_ARRAYSIZE(inputBuf), ImGuiInputTextFlags_EnterReturnsTrue);
-        
-        ImGui::SameLine();
-        if (ImGui::Button("发送", ImVec2(80, 0)) || isEnterPressed) {
-            if (strlen(inputBuf) > 0) {
-                std::cout << "玩家发送: " << inputBuf << std::endl;
-                // TODO: 这里将来要调用 NPC 的 interact 逻辑
-                
-                inputBuf[0] = '\0'; // 发送后清空输入框
-                
-                // 让输入框重新获得焦点，方便连续打字
-                ImGui::SetKeyboardFocusHere(-1); 
+        // 常规聊天模式 VS 事件选择模式
+        if (isEventActive) {
+            // ==== 事件选择模式 ====
+            ImGui::TextColored(ImVec4(0.9f, 0.4f, 0.4f, 1.0f), "命运的岔路口（请做出选择）：");
+            
+            for (size_t i = 0; i < currentEvent.choices.size(); ++i) {
+                // 将选项渲染为宽度填满的按钮
+                if (ImGui::Button(currentEvent.choices[i].c_str(), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+                    // 当玩家点击选项时：
+                    std::string chosenAction = currentEvent.choices[i];
+                    
+                    // 1. 玩家的话上屏
+                    uiChatHistory.push_back({mainPlayer.getName(), "【行动】: " + chosenAction});
+                    
+                    // 2. 退出事件模式
+                    isEventActive = false;
+                    
+                    // 3. 将玩家的行动发给 NPC 扮演的大脑，让 NPC 对你的选择做出反应！
+                    isWaitingForReply = true;
+                    futureReply = std::async(std::launch::async, [&activeNPC, chosenAction, &mainPlayer]() {
+                        // 我们在用户文本前加一个前缀，让 NPC 意识到这是一个行动而不是说话
+                        std::string contextualInput = "（我采取了行动：" + chosenAction + "，请根据你的设定做出反应）";
+                        return activeNPC->interact(contextualInput, mainPlayer);
+                    });
+                }
             }
+        } else {
+            // ==== 常规对话模式 ====
+            static char inputBuf[512] = ""; 
+            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 100); 
+            bool isEnterPressed = ImGui::InputText("##ChatInput", inputBuf, IM_ARRAYSIZE(inputBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+            
+            ImGui::SameLine();
+            if (isWaitingForReply || activeNPC == nullptr) ImGui::BeginDisabled();
+            
+            if (ImGui::Button("发送", ImVec2(80, 0)) || (isEnterPressed && !isWaitingForReply && activeNPC != nullptr)) {
+                if (strlen(inputBuf) > 0) {
+                    std::string userText = inputBuf;
+                    uiChatHistory.push_back({mainPlayer.getName(), userText}); 
+                    inputBuf[0] = '\0'; 
+                    
+                    isWaitingForReply = true;
+                    futureReply = std::async(std::launch::async, [&activeNPC, userText, &mainPlayer]() {
+                        return activeNPC->interact(userText, mainPlayer);
+                    });
+                    
+                    ImGui::SetKeyboardFocusHere(-1); 
+                }
+            }
+            if (isWaitingForReply || activeNPC == nullptr) ImGui::EndDisabled();
         }
         
         ImGui::EndChild();

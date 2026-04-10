@@ -146,7 +146,9 @@ int main() {
     bool isGeneratingEvent = false;
     GameEvent currentEvent;
     bool isEventActive = false;
-
+    std::future<std::string> futureEncounter;
+    bool isGeneratingEncounter = false;
+    bool hasEncounterStarted = false;
 
     // 4. 游戏主循环 (Render Loop)
     while (!glfwWindowShouldClose(window)) {
@@ -177,35 +179,54 @@ int main() {
             }
         }
 
+        // 检查角色生成是否完成
         if (isGeneratingNPC && futureProfile.valid()) {
-            // wait_for 设置为 0 秒，意味着“只看一眼结果有没有好，没好就立刻继续往下走”
             if (futureProfile.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-                currentNPC = futureProfile.get(); // 获取生成的角色档案
-                isGeneratingNPC = false;          // 结束生成状态
-
+                currentNPC = futureProfile.get(); 
+                isGeneratingNPC = false;          
+                
                 std::string complexPersona = "外貌：" + currentNPC.appearance + "。核心性格：" + currentNPC.personality_core + "。隐藏创伤/执念：" + currentNPC.hidden_trauma;
                 activeNPC = std::make_unique<NPC>(currentNPC.name, complexPersona);
                 
-                // 清空聊天记录，并加入系统提示
                 uiChatHistory.clear();
-                uiChatHistory.push_back({"系统", currentNPC.name + " 降临到了你的世界。"});
+                hasEncounterStarted = false;
+                
+                // 不直接开聊，而是呼叫 GM 创作相遇场景！
+                isGeneratingEncounter = true;
+                futureEncounter = ProfileGenerator::generateEncounterAsync(std::string(worldSettingBuf), mainPlayer, currentNPC);
             }
         }
 
+        // 检查玩家“重置人生”是否完成
         if (isGeneratingPlayer && futurePlayerProfile.valid()) {
             if (futurePlayerProfile.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
                 auto newProfile = futurePlayerProfile.get(); 
-                
-                // 覆盖当前主角设定
                 mainPlayer = Player(newProfile.first); 
                 mainPlayer.setBackstory(newProfile.second);
                 isGeneratingPlayer = false;          
                 
-                // 重置世界线
-                activeNPC = nullptr; 
-                currentNPC.is_generated = false;
+                // 保留 NPC！不销毁 activeNPC！
                 uiChatHistory.clear();
-                uiChatHistory.push_back({"系统", "命运的齿轮开始转动，你以全新的身份 [" + mainPlayer.getName() + "] 降临这个世界。"});
+                hasEncounterStarted = false;
+                
+                if (activeNPC != nullptr) {
+                    // 既然主角变了，世界线变动，触发全新的相遇场景！
+                    isGeneratingEncounter = true;
+                    futureEncounter = ProfileGenerator::generateEncounterAsync(std::string(worldSettingBuf), mainPlayer, currentNPC);
+                } else {
+                    uiChatHistory.push_back({"系统", "命运的齿轮转动，你以新身份降临。请点击下方邂逅新角色。"});
+                }
+            }
+        }
+
+        // 3. 检查相遇场景是否生成完毕
+        if (isGeneratingEncounter && futureEncounter.valid()) {
+            if (futureEncounter.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+                std::string encounterScene = futureEncounter.get();
+                isGeneratingEncounter = false;
+                hasEncounterStarted = true;
+                // 将绝美的开场白上屏，现在玩家可以开始搭话了！
+                uiChatHistory.push_back({"【GM 场景导入】", encounterScene});
             }
         }
 
@@ -310,7 +331,9 @@ int main() {
             
             // 隐藏的心理创伤（作为剧本钩子，前期可以使用暗色字体提示）
             ImGui::Spacing();
-            ImGui::TextColored(ImVec4(0.6f, 0.5f, 0.5f, 1.0f), "【未知的执念/秘密】: %s", currentNPC.hidden_trauma.c_str());
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.5f, 0.5f, 1.0f));
+            ImGui::TextWrapped("【未知的执念/秘密】: %s", currentNPC.hidden_trauma.c_str());
+            ImGui::PopStyleColor();
         } else {
             ImGui::Text("暂无角色。请点击下方按钮邂逅新的缘分。");
         }
@@ -322,13 +345,18 @@ int main() {
         
         //动态渲染真实聊天记录
         for (const auto& chat : uiChatHistory) {
-            if (chat.first == "系统") {
-                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "[系统]: %s", chat.second.c_str());
+            ImVec4 textColor;
+            if (chat.first == "系统" || chat.first == "【GM 场景导入】" || chat.first == "【GM 突发事件】") {
+                textColor = ImVec4(0.6f, 0.6f, 0.6f, 1.0f); // 灰色
             } else if (chat.first == mainPlayer.getName()) {
-                ImGui::TextColored(ImVec4(0.5f, 0.7f, 0.9f, 1.0f), "你: %s", chat.second.c_str());
+                textColor = ImVec4(0.5f, 0.7f, 0.9f, 1.0f); // 蓝色
             } else {
-                ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.6f, 1.0f), "%s: %s", chat.first.c_str(), chat.second.c_str());
+                textColor = ImVec4(0.9f, 0.5f, 0.6f, 1.0f); // 粉色
             }
+            
+            ImGui::PushStyleColor(ImGuiCol_Text, textColor);
+            ImGui::TextWrapped("%s: %s", chat.first.c_str(), chat.second.c_str());
+            ImGui::PopStyleColor();
             ImGui::Spacing();
         }
 
@@ -368,6 +396,22 @@ int main() {
         }
         ImGui::SameLine();
 
+        if (activeNPC != nullptr && !hasEncounterStarted) {
+            if (isGeneratingEncounter) {
+                ImGui::BeginDisabled(); ImGui::Button("正在靠近...", ImVec2(100, 0)); ImGui::EndDisabled();
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.96f, 0.54f, 0.60f, 1.0f)); 
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.98f, 0.64f, 0.70f, 1.0f)); 
+                
+                if (ImGui::Button("开始邂逅", ImVec2(120, 0))) {
+                    isGeneratingEncounter = true;
+                    // 呼叫 GM 生成导入幕
+                    futureEncounter = ProfileGenerator::generateEncounterAsync(std::string(worldSettingBuf), mainPlayer, currentNPC);
+                }
+                
+                ImGui::PopStyleColor(2);
+            }
+        }
         ImGui::Spacing();
 
         // 常规聊天模式 VS 事件选择模式
@@ -396,22 +440,25 @@ int main() {
                     });
                 }
             }
-        } else {
+        }else {
             // ==== 常规对话模式 ====
             static char inputBuf[512] = ""; 
             ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 100); 
             bool isEnterPressed = ImGui::InputText("##ChatInput", inputBuf, IM_ARRAYSIZE(inputBuf), ImGuiInputTextFlags_EnterReturnsTrue);
             
             ImGui::SameLine();
-            if (isWaitingForReply || activeNPC == nullptr) ImGui::BeginDisabled();
             
-            if (ImGui::Button("发送", ImVec2(80, 0)) || (isEnterPressed && !isWaitingForReply && activeNPC != nullptr)) {
+            //提前锁定本帧的禁用状态
+            bool disableInput = (isWaitingForReply || activeNPC == nullptr || isGeneratingEncounter || !hasEncounterStarted);
+            if (disableInput) ImGui::BeginDisabled();
+            
+            if (ImGui::Button("发送", ImVec2(80, 0)) || (isEnterPressed && !disableInput)) {
                 if (strlen(inputBuf) > 0) {
                     std::string userText = inputBuf;
                     uiChatHistory.push_back({mainPlayer.getName(), userText}); 
                     inputBuf[0] = '\0'; 
                     
-                    isWaitingForReply = true;
+                    isWaitingForReply = true; // 改变状态，但不会影响下面的 EndDisabled
                     futureReply = std::async(std::launch::async, [&activeNPC, userText, &mainPlayer]() {
                         return activeNPC->interact(userText, mainPlayer);
                     });
@@ -419,7 +466,15 @@ int main() {
                     ImGui::SetKeyboardFocusHere(-1); 
                 }
             }
-            if (isWaitingForReply || activeNPC == nullptr) ImGui::EndDisabled();
+            
+            if (disableInput) ImGui::EndDisabled(); // 使用锁定的状态变量，完美匹配！
+            
+            // GM 状态提示
+            if (isGeneratingEncounter) {
+                ImGui::TextColored(ImVec4(0.9f, 0.6f, 0.2f, 1.0f), "GM 正在布置相遇的场景...");
+            } else if (isGeneratingEvent) {
+                ImGui::TextColored(ImVec4(0.9f, 0.4f, 0.4f, 1.0f), "GM 正在暗中改变命运的走向...");
+            }
         }
         
         ImGui::EndChild();

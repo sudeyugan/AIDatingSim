@@ -21,4 +21,7 @@ public:
 
     //让 GM 生成突发事件
     static std::future<GameEvent> generateRandomEventAsync(const std::string& worldSetting, const Player& player, const CharacterProfile& npc, const std::string& chatContext);
+
+    // 生成初次相遇的场景
+    static std::future<std::string> generateEncounterAsync(const std::string& worldSetting, const Player& player, const CharacterProfile& npc);
 };

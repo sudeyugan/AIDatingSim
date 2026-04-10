@@ -24,10 +24,13 @@ bool ConfigManager::loadConfig(const std::string& filePath) {
         if (j.contains("deepseek_api_key")) {
             apiKey = j["deepseek_api_key"];
             return true;
-        } else {
-            std::cerr << "[Error] config.json 中缺少 'deepseek_api_key' 字段！" << std::endl;
-            return false;
+        } 
+        
+        if (j.contains("image_api_key") && j["image_api_key"].is_string()) {
+            imageApiKey = j["image_api_key"];
         }
+
+        return true;
     } catch (const std::exception& e) {
         std::cerr << "[Error] 解析 config.json 失败: " << e.what() << std::endl;
         return false;
@@ -36,4 +39,8 @@ bool ConfigManager::loadConfig(const std::string& filePath) {
 
 std::string ConfigManager::getApiKey() const {
     return apiKey;
+}
+
+std::string ConfigManager::getImageApiKey() const {
+    return imageApiKey;
 }

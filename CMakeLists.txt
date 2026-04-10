@@ -28,6 +28,7 @@ file(GLOB SOURCES "src/*.cpp")
 include_directories(
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/vendor/imgui # 让项目能找到 imgui.h
+    ${CMAKE_SOURCE_DIR}/vendor/stb_image
 )
 
 if(MSVC)

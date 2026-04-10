@@ -4,6 +4,7 @@
 #include <deque>
 #include "json.hpp"
 #include "Player.h"
+#include <future>
 
 class Player;
 
@@ -18,7 +19,8 @@ private:
     std::string basePersona; // 核心人设 (例如：傲娇学霸、温柔前台)
     int affection; // 好感度 (0-100)
     std::deque<nlohmann::json> chatHistory; 
-    const size_t MAX_HISTORY = 10;          
+    const size_t MAX_HISTORY = 40;
+    std::string portraitPath;        
 
 public:
     NPC(std::string n, std::string persona);
@@ -29,10 +31,16 @@ public:
     // 与玩家交互 (接收玩家输入，返回 NPC 文本回复)
     NPCResponse interact(const std::string& playerInput, const Player& player);
 
+    void injectSceneMemory(const std::string& sceneDescription);
+
     // 调用生图 API 生成角色立绘
     void generatePortraitAPI() const;
 
     // 修改好感度
     void changeAffection(int amount);
     std::string getName() const;
+
+    std::future<bool> generatePortraitAsync();
+
+    std::string getPortraitPath() const { return portraitPath; }
 };

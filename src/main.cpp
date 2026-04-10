@@ -14,6 +14,7 @@
 #include <vector>
 #include "GameEvent.h"
 #include <algorithm>
+#include "ImageLoader.h"
 
 void SetupImGuiStyle() {
     ImGuiStyle& style = ImGui::GetStyle();
@@ -150,6 +151,10 @@ int main() {
     bool isGeneratingEncounter = false;
     bool hasEncounterStarted = false;
 
+    ImageLoader npcImageLoader;            // 负责把图片塞进显卡的工具
+    std::future<bool> futurePortrait;      // 等待图片下载的异步任务
+    bool isGeneratingPortrait = false;     // 是否正在画图中
+
     // 4. 游戏主循环 (Render Loop)
     while (!glfwWindowShouldClose(window)) {
         // 处理各种输入事件 (鼠标、键盘)
@@ -188,12 +193,28 @@ int main() {
                 std::string complexPersona = "外貌：" + currentNPC.appearance + "。核心性格：" + currentNPC.personality_core + "。隐藏创伤/执念：" + currentNPC.hidden_trauma;
                 activeNPC = std::make_unique<NPC>(currentNPC.name, complexPersona);
                 
+                npcImageLoader.Free(); // 清空上一任 NPC 的立绘
+                isGeneratingPortrait = true;
+                futurePortrait = activeNPC->generatePortraitAsync();
+
+                hasEncounterStarted = false; 
                 uiChatHistory.clear();
-                hasEncounterStarted = false;
+                uiChatHistory.push_back({"系统", currentNPC.name + " 的灵魂已在当前世界降临。"});
+                uiChatHistory.push_back({"系统", "请在准备好后，点击下方的“开始邂逅”按钮。"});
+                        
+            }
+        }
+
+        // 检查画师（图片下载）是否完工
+        if (isGeneratingPortrait && futurePortrait.valid()) {
+            if (futurePortrait.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+                bool success = futurePortrait.get();
+                isGeneratingPortrait = false;
                 
-                // 不直接开聊，而是呼叫 GM 创作相遇场景！
-                isGeneratingEncounter = true;
-                futureEncounter = ProfileGenerator::generateEncounterAsync(std::string(worldSettingBuf), mainPlayer, currentNPC);
+                if (success && activeNPC != nullptr) {
+                    // 读取刚刚下载到硬盘的图片，转换成 OpenGL 纹理
+                    npcImageLoader.LoadFromFile(activeNPC->getPortraitPath());
+                }
             }
         }
 
@@ -207,15 +228,10 @@ int main() {
                 
                 // 保留 NPC！不销毁 activeNPC！
                 uiChatHistory.clear();
-                hasEncounterStarted = false;
-                
-                if (activeNPC != nullptr) {
-                    // 既然主角变了，世界线变动，触发全新的相遇场景！
-                    isGeneratingEncounter = true;
-                    futureEncounter = ProfileGenerator::generateEncounterAsync(std::string(worldSettingBuf), mainPlayer, currentNPC);
-                } else {
-                    uiChatHistory.push_back({"系统", "命运的齿轮转动，你以新身份降临。请点击下方邂逅新角色。"});
-                }
+                hasEncounterStarted = false;           
+
+                uiChatHistory.push_back({"系统", "命运的齿轮转动，你以新身份降临。"});
+
             }
         }
 
@@ -227,6 +243,10 @@ int main() {
                 hasEncounterStarted = true;
                 // 将绝美的开场白上屏，现在玩家可以开始搭话了！
                 uiChatHistory.push_back({"【GM 场景导入】", encounterScene});
+            
+                if (activeNPC != nullptr) {
+                    activeNPC->injectSceneMemory(encounterScene);
+                }
             }
         }
 
@@ -264,17 +284,40 @@ int main() {
         float bottom_height = ImGui::GetFrameHeightWithSpacing() * 3.0f;
 
         // ----------------------------------------------------
-        // 区域 A：左侧视觉区 (占据 60% 宽度，高度减去底部交互区)
+        // 区域 A：左侧立绘区 (占据 60% 宽度)
         // ----------------------------------------------------
-        ImGui::BeginChild("SceneArea", ImVec2(ImGui::GetContentRegionAvail().x * 0.6f, ImGui::GetContentRegionAvail().y - bottom_height), true);
+        float left_width = ImGui::GetContentRegionAvail().x * 0.6f; 
+        ImGui::BeginChild("PortraitArea", ImVec2(left_width, ImGui::GetContentRegionAvail().y - bottom_height), true);
         
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), "【场景可视化区域】");
-        ImGui::Text("这里未来将渲染 OpenGL 纹理（生图 API 返回的图片）。");
-        ImGui::Text("目前角色：正在等待加载...");
-        
-        // 留白占位
-        ImGui::Dummy(ImVec2(0.0f, 100.0f)); 
-        ImGui::TextDisabled("(立绘占位符)");
+        if (isGeneratingPortrait) {
+            // 画图是很慢的（通常要 5~15 秒），给玩家一个有氛围的提示
+            ImGui::SetCursorPosY(ImGui::GetWindowHeight() / 2.0f);
+            ImGui::TextDisabled("... AI 画师正在跨越次元描绘 %s 的容貌 ...", currentNPC.name.c_str());
+        } 
+        else if (npcImageLoader.isLoaded()) {
+            // 【图片渲染魔法】！
+            // 获取窗口的可用大小
+            ImVec2 availSize = ImGui::GetContentRegionAvail();
+            
+            // 计算等比例缩放，让图片完美适应左侧窗口
+            float aspect = (float)npcImageLoader.getWidth() / (float)npcImageLoader.getHeight();
+            ImVec2 imageSize;
+            if (availSize.x / aspect <= availSize.y) {
+                imageSize = ImVec2(availSize.x, availSize.x / aspect);
+            } else {
+                imageSize = ImVec2(availSize.y * aspect, availSize.y);
+            }
+
+            // 居中显示图片
+            ImGui::SetCursorPosX((ImGui::GetWindowWidth() - imageSize.x) * 0.5f);
+            ImGui::SetCursorPosY((ImGui::GetWindowHeight() - imageSize.y) * 0.5f);
+            
+            // 将 OpenGL 的纹理 ID 喂给 ImGui 画出来
+            ImGui::Image((void*)(intptr_t)npcImageLoader.getTextureID(), imageSize);
+        } 
+        else {
+            ImGui::Text("暂无立绘数据");
+        }
 
         ImGui::EndChild();
 

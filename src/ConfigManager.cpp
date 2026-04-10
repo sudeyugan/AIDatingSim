@@ -23,7 +23,6 @@ bool ConfigManager::loadConfig(const std::string& filePath) {
         
         if (j.contains("deepseek_api_key")) {
             apiKey = j["deepseek_api_key"];
-            return true;
         } 
         
         if (j.contains("image_api_key") && j["image_api_key"].is_string()) {

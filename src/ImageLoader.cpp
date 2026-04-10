@@ -25,9 +25,6 @@ void ImageLoader::Free() {
 bool ImageLoader::LoadFromFile(const std::string& filename) {
     Free(); // 加载新图前，释放旧图内存
 
-    // 让 stb_image 知道我们要翻转 Y 轴 (OpenGL 的纹理坐标从左下角开始)
-    stbi_set_flip_vertically_on_load(true);
-
     // 读取图片像素数据 (强制要求 RGBA 4个通道)
     unsigned char* image_data = stbi_load(filename.c_str(), &width, &height, &channels, 4);
     if (image_data == nullptr) {

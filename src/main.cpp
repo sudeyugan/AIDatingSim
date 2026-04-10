@@ -79,10 +79,9 @@ static void glfw_error_callback(int error, const char* description) {
 int main() {
     SetConsoleOutputCP(CP_UTF8);
 
-    if (!ConfigManager::getInstance().loadConfig("../config.json")) {
-        std::cerr << "[警告] 配置加载失败，请检查工程目录下是否存在 config.json" << std::endl;
-    }
-
+    // 加载配置
+    ConfigManager::getInstance().loadConfig("../config.json");
+    
     // 1. 初始化 GLFW
     glfwSetErrorCallback(glfw_error_callback);
     if (!glfwInit()) return 1;

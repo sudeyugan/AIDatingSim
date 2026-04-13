@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include "json.hpp"
 
 class Player {
 private:
@@ -11,6 +12,9 @@ private:
 
 public:
     Player(std::string pName);
+
+    nlohmann::json toJson() const;
+    void fromJson(const nlohmann::json& j);
     
     // Getters
     std::string getName() const;

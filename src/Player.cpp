@@ -15,3 +15,21 @@ void Player::updateStats(int dCharm, int dInt, int dWealth) {
     intelligence += dInt;
     wealth += dWealth;
 }
+
+nlohmann::json Player::toJson() const {
+    return {
+        {"name", name},
+        {"backstory", backstory},
+        {"charm", charm},
+        {"intelligence", intelligence},
+        {"wealth", wealth}
+    };
+}
+
+void Player::fromJson(const nlohmann::json& j) {
+    name = j.value("name", "Unknown");
+    backstory = j.value("backstory", "");
+    charm = j.value("charm", 0);
+    intelligence = j.value("intelligence", 0);
+    wealth = j.value("wealth", 0);
+}

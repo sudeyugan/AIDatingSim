@@ -5,6 +5,7 @@
 #include "json.hpp"
 #include "Player.h"
 #include <future>
+#include "ImageLoader.h"
 
 class Player;
 
@@ -21,9 +22,13 @@ private:
     std::deque<nlohmann::json> chatHistory; 
     const size_t MAX_HISTORY = 40;
     std::string portraitPath;        
+    ImageLoader portraitImage;
 
 public:
     NPC(std::string n, std::string persona);
+
+    nlohmann::json toJson() const;
+    void fromJson(const nlohmann::json& j);
 
     // 核心逻辑：根据当前好感度动态生成 System Prompt
     std::string generateDynamicSystemPrompt(const Player& player) const;
@@ -42,5 +47,8 @@ public:
 
     std::future<bool> generatePortraitAsync();
 
+    ImageLoader& getPortraitImage() { return portraitImage; }
     std::string getPortraitPath() const { return portraitPath; }
+
+    void reloadTexture();
 };

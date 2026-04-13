@@ -230,3 +230,35 @@ std::future<bool> NPC::generatePortraitAsync() {
         return false;
     });
 }
+
+nlohmann::json NPC::toJson() const {
+    return {
+        {"name", name},
+        {"basePersona", basePersona},
+        {"affection", affection},
+        {"portraitPath", portraitPath},
+        {"chatHistory", chatHistory} // nlohmann::json 会自动处理 STL 容器嵌套 JSON
+    };
+}
+
+void NPC::fromJson(const nlohmann::json& j) {
+    name = j.value("name", "Unknown NPC");
+    basePersona = j.value("basePersona", "");
+    affection = j.value("affection", 0);
+    portraitPath = j.value("portraitPath", "");
+    
+    if (j.contains("chatHistory")) {
+        chatHistory = j["chatHistory"].get<std::deque<nlohmann::json>>();
+    }
+}
+
+void NPC::reloadTexture() {
+    // 只有当路径不为空时才去加载（避免空NPC或者还没生图的NPC报错）
+    if (!portraitPath.empty()) {
+        // LoadFromFile 会自动处理 stb_image 的读取和 glGenTextures
+        bool success = portraitImage.LoadFromFile(portraitPath);
+        if (!success) {
+            std::cerr << "存档恢复警告：找不到立绘文件 " << portraitPath << std::endl;
+        }
+    }
+}

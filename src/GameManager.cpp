@@ -1,3 +1,4 @@
+#define _CRT_SECURE_NO_WARNINGS
 #include "GameManager.h"
 #include "NPCFactory.h"
 #include <iostream>
@@ -5,14 +6,18 @@
 #include <fstream>
 #include "json.hpp"
 #include "imgui.h"
+#include <algorithm>
+#include "imgui_impl_glfw.h"     
+#include "imgui_impl_opengl3.h"  
+#include <GLFW/glfw3.h>          
+#include <filesystem>
+#include "ProfileGenerator.h"
 
 namespace fs = std::filesystem;
 
 GameManager::GameManager() : mainPlayer("主角"), isRunning(true) {
     strcpy(worldSettingBuf, "现代日常都市");
 }
-
-GameManager::GameManager() : currentTime(TimeOfDay::MORNING), isRunning(true) {}
 
 void GameManager::initGame() {
     std::cout << "[系统] 正在初始化游戏大管家..." << std::endl;
@@ -186,19 +191,6 @@ void GameManager::checkAsyncTasks() {
 
 void GameManager::renderUI() {
     // 设定全屏窗口
-    ImGuiViewport* viewport = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(viewport->WorkPos);
-    ImGui::SetNextWindowSize(viewport->WorkSize);
-    ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings;
-    
-    ImGui::Begin("MainGameWindow", nullptr, window_flags);
-
-        // 启动 ImGui 的新一帧
-    ImGui_ImplOpenGL3_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
-
-    // 1. 让主窗口填满整个 GLFW 窗口，且去除系统的标题栏和边框
     ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
     ImGui::SetNextWindowSize(viewport->WorkSize);
@@ -402,9 +394,8 @@ void GameManager::renderUI() {
                 
                 // 3. 将玩家的行动发给 NPC 扮演的大脑，让 NPC 对你的选择做出反应！
                 isWaitingForReply = true;
-                futureReply = std::async(std::launch::async, [&activeNPC, chosenAction, &mainPlayer]() {
-                    // 我们在用户文本前加一个前缀，让 NPC 意识到这是一个行动而不是说话
-                    std::string contextualInput = "（我采取了行动：" + chosenAction + "，请根据你的设定做出反应）";
+                futureReply = std::async(std::launch::async, [this, chosenAction]() {
+                    std::string contextualInput = "（采取行动：" + chosenAction + "）";
                     return activeNPC->interact(contextualInput, mainPlayer);
                 });
             }
@@ -428,7 +419,8 @@ void GameManager::renderUI() {
                 inputBuf[0] = '\0'; 
                 
                 isWaitingForReply = true; // 改变状态，但不会影响下面的 EndDisabled
-                futureReply = std::async(std::launch::async, [&activeNPC, userText, &mainPlayer]() {
+                futureReply = std::async(std::launch::async, [this, userText]() {
+                    // 通过 this 指针隐式访问成员变量
                     return activeNPC->interact(userText, mainPlayer);
                 });
                 

@@ -13,16 +13,23 @@
 
 class GameManager {
 private:
-    bool isRunning = true; // 控制游戏循环
+    bool isRunning = true; 
 
     // ================= [核心游戏状态] =================
     Player mainPlayer;
     CharacterProfile currentNPC;
-    std::unique_ptr<NPC> activeNPC;
+    std::shared_ptr<NPC> activeNPC; // 注意：改用 shared_ptr 方便后续存档和传参
     std::vector<std::pair<std::string, std::string>> uiChatHistory;
     char worldSettingBuf[256];
 
-    // ================= [异步状态机 (原 main.cpp 的变量)] =================
+    // ================= [存档系统变量] =================
+    std::vector<std::string> availableSaves;
+
+    // ================= [异步状态机变量] =================
+    bool isAIBusy = false;
+    std::future<bool> currentAITask;            
+    std::shared_ptr<NPC> interactingNPC = nullptr; 
+
     std::future<CharacterProfile> futureProfile;
     bool isGeneratingNPC = false;
 
@@ -48,16 +55,19 @@ private:
     std::future<bool> futurePortrait;
     bool isGeneratingPortrait = false;
 
-    void checkAsyncTasks(); // 专门用于处理所有的 .wait_for(0) 轮询
-    void renderUI();        // 专门用于渲染 ImGui 画面
+    // ================= [内部私有方法] =================
+    void checkAsyncTasks(); 
+    void renderUI();        
 
 public:
     GameManager();
     void initGame();
-    
-    // 每帧调用的主逻辑
     void runLoop(); 
-    
-    // 给 main.cpp 检查是否退出的接口
     bool isGameRunning() const { return isRunning; } 
+
+    // 存档与防抖接口
+    void scanSaveFiles();
+    bool saveGame(const std::string& filename);
+    bool loadGame(const std::string& filename);
+    void startAITask(std::shared_ptr<NPC> npc, std::future<bool> task);
 };

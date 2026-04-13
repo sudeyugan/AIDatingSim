@@ -11,6 +11,7 @@ private:
     int wealth;       
 
 public:
+    Player() = default;
     Player(std::string pName);
 
     nlohmann::json toJson() const;

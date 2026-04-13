@@ -11,9 +11,17 @@
 #include "GameEvent.h"
 #include "ImageLoader.h"
 
+enum class TimeOfDay { MORNING, NOON, NIGHT };
+
 class GameManager {
 private:
     bool isRunning = true; 
+
+    TimeOfDay currentTime = TimeOfDay::MORNING;
+
+    void advanceTime();
+
+    int chatTurns = 0; // 聊天回合计数器，用于控制时间流逝
 
     // ================= [核心游戏状态] =================
     Player mainPlayer;

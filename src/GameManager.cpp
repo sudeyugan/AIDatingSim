@@ -19,6 +19,23 @@ GameManager::GameManager() : mainPlayer("主角"), isRunning(true) {
     strcpy(worldSettingBuf, "现代日常都市");
 }
 
+void GameManager::advanceTime() {
+    // 根据当前时间推进到下一个时间段，并向 UI 聊天记录中插入系统旁白
+    if (currentTime == TimeOfDay::MORNING) { 
+        currentTime = TimeOfDay::NOON; 
+        uiChatHistory.push_back({"系统", "（时间流逝，转眼到了午后...）"});
+    }
+    else if (currentTime == TimeOfDay::NOON) { 
+        currentTime = TimeOfDay::NIGHT; 
+        uiChatHistory.push_back({"系统", "（夜幕降临，到了深夜...）"});
+    }
+    else { 
+        // 如果是深夜，推进后则进入第二天清晨
+        currentTime = TimeOfDay::MORNING; 
+        uiChatHistory.push_back({"系统", "（朝阳升起，新的一天开始了。）"});
+    }
+}
+
 void GameManager::initGame() {
     std::cout << "[系统] 正在初始化游戏大管家..." << std::endl;
 
@@ -84,22 +101,26 @@ void GameManager::checkAsyncTasks() {
     // 检查世界观生成是否完成
     if (isWaitingForReply && futureReply.valid()) {
         if (futureReply.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-            NPCResponse response = futureReply.get(); // 【修改】获取结构体
+            NPCResponse response = futureReply.get(); 
             
+            // 1. NPC 的话上屏
             uiChatHistory.push_back({activeNPC->getName(), response.reply}); 
             isWaitingForReply = false;
             
-            // ：NPC 觉得是时候推进剧情了！
+            chatTurns++; // 增加回合数
+            if (chatTurns >= 5) { // 设定每 5 个回合时间流逝一次（你可以自己调整难度）
+                advanceTime();
+                chatTurns = 0; // 重置计数器
+            }
+
+            // 2. 判定是否触发命运事件
             if (response.trigger_event && !isEventActive) {
                 isGeneratingEvent = true;
-                
                 std::string recentContext = "";
                 int startIdx = std::max(0, (int)uiChatHistory.size() - 6);
                 for (int i = startIdx; i < uiChatHistory.size(); ++i) {
                     recentContext += uiChatHistory[i].first + ": " + uiChatHistory[i].second + "\n";
                 }
-                
-                // 让 GM 根据上下文降下事件
                 futureEvent = ProfileGenerator::generateRandomEventAsync(std::string(worldSettingBuf), mainPlayer, currentNPC, recentContext);
             }
         }
@@ -207,6 +228,13 @@ void GameManager::renderUI() {
     float left_width = ImGui::GetContentRegionAvail().x * 0.6f; 
     ImGui::BeginChild("PortraitArea", ImVec2(left_width, ImGui::GetContentRegionAvail().y - bottom_height), true);
     
+    std::string timeStr = (currentTime == TimeOfDay::MORNING) ? "清晨" : 
+                          (currentTime == TimeOfDay::NOON) ? "午后" : "深夜";
+    
+    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "当前时间: %s", timeStr.c_str());
+    ImGui::TextDisabled("距离下一时段还有: %d 回合", 5 - chatTurns); // 动态显示剩余回合
+    ImGui::Separator();
+
     if (isGeneratingPortrait) {
         // 画图是很慢的（通常要 5~15 秒），给玩家一个有氛围的提示
         ImGui::SetCursorPosY(ImGui::GetWindowHeight() / 2.0f);
@@ -377,65 +405,56 @@ void GameManager::renderUI() {
 
     // 常规聊天模式 VS 事件选择模式
     if (isEventActive) {
-        // ==== 事件选择模式 ====
-        ImGui::TextColored(ImVec4(0.9f, 0.4f, 0.4f, 1.0f), "命运的岔路口（请做出选择）：");
-        
         for (size_t i = 0; i < currentEvent.choices.size(); ++i) {
-            // 将选项渲染为宽度填满的按钮
-            if (ImGui::Button(currentEvent.choices[i].c_str(), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
-                // 当玩家点击选项时：
-                std::string chosenAction = currentEvent.choices[i];
-                
-                // 1. 玩家的话上屏
+            if (ImGui::Button(currentEvent.choices[i].c_str())) {
+                std::string chosenAction = currentEvent.choices[i]; 
                 uiChatHistory.push_back({mainPlayer.getName(), "【行动】: " + chosenAction});
-                
-                // 2. 退出事件模式
                 isEventActive = false;
-                
-                // 3. 将玩家的行动发给 NPC 扮演的大脑，让 NPC 对你的选择做出反应！
                 isWaitingForReply = true;
-                futureReply = std::async(std::launch::async, [this, chosenAction]() {
-                    std::string contextualInput = "（采取行动：" + chosenAction + "）";
+                
+                // 注入时间
+                std::string timeContext = (currentTime == TimeOfDay::MORNING) ? "清晨" : 
+                                          (currentTime == TimeOfDay::NOON) ? "午后" : "深夜";
+                
+                futureReply = std::async(std::launch::async, [this, chosenAction, timeContext]() {
+                    // 让 AI 知道现在的场景和时间
+                    std::string contextualInput = "（系统提示：当前时间是" + timeContext + "，我采取了行动：" + chosenAction + "）";
                     return activeNPC->interact(contextualInput, mainPlayer);
                 });
             }
         }
-    }else {
-        // ==== 常规对话模式 ====
+    } else {
         static char inputBuf[512] = ""; 
-        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 100); 
-        bool isEnterPressed = ImGui::InputText("##ChatInput", inputBuf, IM_ARRAYSIZE(inputBuf), ImGuiInputTextFlags_EnterReturnsTrue);
-        
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 80);
+        bool pressed = ImGui::InputText("##ChatInput", inputBuf, IM_ARRAYSIZE(inputBuf), ImGuiInputTextFlags_EnterReturnsTrue);
         ImGui::SameLine();
         
-        //提前锁定本帧的禁用状态
-        bool disableInput = (isWaitingForReply || activeNPC == nullptr || isGeneratingEncounter || !hasEncounterStarted);
+        bool disableInput = isWaitingForReply || activeNPC == nullptr;
         if (disableInput) ImGui::BeginDisabled();
         
-        if (ImGui::Button("发送", ImVec2(80, 0)) || (isEnterPressed && !disableInput)) {
+        if (ImGui::Button("发送") || (pressed && !disableInput)) {
             if (strlen(inputBuf) > 0) {
-                std::string userText = inputBuf;
+                std::string userText = inputBuf; 
+                
+                // 1. UI 聊天框只显示玩家干净的话，不显示系统提示词
                 uiChatHistory.push_back({mainPlayer.getName(), userText}); 
                 inputBuf[0] = '\0'; 
+                isWaitingForReply = true;
                 
-                isWaitingForReply = true; // 改变状态，但不会影响下面的 EndDisabled
-                futureReply = std::async(std::launch::async, [this, userText]() {
-                    // 通过 this 指针隐式访问成员变量
-                    return activeNPC->interact(userText, mainPlayer);
+                // 聊天模式：注入时间灵魂
+                std::string timeContext = (currentTime == TimeOfDay::MORNING) ? "清晨" : 
+                                          (currentTime == TimeOfDay::NOON) ? "午后" : "深夜";
+                
+                // 2. 发给 AI 的文字，带上了隐形的场景暗示
+                std::string hiddenInput = "（系统提示：当前游戏时间是" + timeContext + "）" + userText;
+                
+                //这里捕获了 hiddenInput 发送给后端
+                futureReply = std::async(std::launch::async, [this, hiddenInput]() {
+                    return activeNPC->interact(hiddenInput, mainPlayer);
                 });
-                
-                ImGui::SetKeyboardFocusHere(-1); 
             }
         }
-        
-        if (disableInput) ImGui::EndDisabled(); // 使用锁定的状态变量，完美匹配！
-        
-        // GM 状态提示
-        if (isGeneratingEncounter) {
-            ImGui::TextColored(ImVec4(0.9f, 0.6f, 0.2f, 1.0f), "GM 正在布置相遇的场景...");
-        } else if (isGeneratingEvent) {
-            ImGui::TextColored(ImVec4(0.9f, 0.4f, 0.4f, 1.0f), "GM 正在暗中改变命运的走向...");
-        }
+        if (disableInput) ImGui::EndDisabled();
     }
     
     ImGui::EndChild();
@@ -475,38 +494,46 @@ void GameManager::scanSaveFiles() {
     }
 }
 
-void GameManager::advanceTime() {
-    if (currentTime == TimeOfDay::MORNING) { currentTime = TimeOfDay::NOON; std::cout << "【时间流逝：到了中午】\n"; }
-    else if (currentTime == TimeOfDay::NOON) { currentTime = TimeOfDay::NIGHT; std::cout << "【时间流逝：到了晚上】\n"; }
-    else { currentTime = TimeOfDay::MORNING; std::cout << "【时间流逝：新的一天开始了】\n"; }
-}
-
 bool GameManager::saveGame(const std::string& filename) {
     nlohmann::json saveData;
-    
-    // 1. 存储游戏元数据
+
+    // 1. 存储全局系统状态（包括最新的时间和回合数）
     saveData["currentTime"] = static_cast<int>(currentTime);
-    saveData["isRunning"] = isRunning;
+    saveData["chatTurns"] = chatTurns;
+    saveData["worldSetting"] = std::string(worldSettingBuf);
 
-    // 2. 存储玩家数据
-    if (player) {
-        saveData["player"] = player->toJson();
+    // 2. 存储玩家数据 (现在的变量叫 mainPlayer，且是对象不是指针)
+    saveData["player"] = mainPlayer.toJson();
+
+    // 3. 存储当前互动的 NPC 数据 (现在的变量叫 activeNPC)
+    if (activeNPC != nullptr) {
+        saveData["activeNPC"] = activeNPC->toJson();
+        
+        // 顺便存一下当前女生的基础档案 (currentNPC 结构体)
+        saveData["profile_name"] = currentNPC.name;
+        saveData["profile_appearance"] = currentNPC.appearance;
+        saveData["profile_personality"] = currentNPC.personality_core;
+        saveData["profile_trauma"] = currentNPC.hidden_trauma;
+        saveData["profile_is_generated"] = currentNPC.is_generated;
     }
 
-    // 3. 存储所有 NPC 数据
-    nlohmann::json npcsJson = nlohmann::json::array();
-    for (const auto& npc : targetNPCs) {
-        npcsJson.push_back(npc->toJson());
+    // 4. 存储 UI 界面上显示的聊天记录（保证读档后画面一模一样）
+    nlohmann::json chatArray = nlohmann::json::array();
+    for (const auto& chat : uiChatHistory) {
+        chatArray.push_back({
+            {"speaker", chat.first},
+            {"content", chat.second}
+        });
     }
-    saveData["npcs"] = npcsJson;
+    saveData["uiChatHistory"] = chatArray;
 
-    // 4. 写入文件
+    // 5. 写入本地 JSON 文件
     std::ofstream file(filename);
     if (!file.is_open()) {
         std::cerr << "Failed to open save file for writing!" << std::endl;
         return false;
     }
-    file << saveData.dump(4); // 格式化输出，缩进4个空格，方便你用 VS Code 直接调试查看
+    file << saveData.dump(4); // 格式化输出，方便查错
     file.close();
     
     return true;
@@ -527,32 +554,46 @@ bool GameManager::loadGame(const std::string& filename) {
         return false;
     }
 
-    // 1. 恢复元数据
+    // 1. 恢复系统时间与回合状态
     currentTime = static_cast<TimeOfDay>(saveData.value("currentTime", 0));
-    isRunning = saveData.value("isRunning", true);
+    chatTurns = saveData.value("chatTurns", 0);
+    
+    // 恢复世界观输入框
+    std::string wSetting = saveData.value("worldSetting", "现代日常都市");
+    strncpy(worldSettingBuf, wSetting.c_str(), sizeof(worldSettingBuf) - 1);
+    worldSettingBuf[sizeof(worldSettingBuf) - 1] = '\0';
 
-    // 2. 恢复玩家
+    // 2. 恢复玩家本体
     if (saveData.contains("player")) {
-        player = std::make_unique<Player>("Temp"); // 先占位
-        player->fromJson(saveData["player"]);
+        mainPlayer.fromJson(saveData["player"]);
     }
 
-    // 3. 恢复 NPC 列表
-    targetNPCs.clear();
-    if (saveData.contains("npcs")) {
-        for (const auto& npcJson : saveData["npcs"]) {
-            // 实例化一个临时的 NPC
-            auto newNPC = std::make_shared<NPC>("Temp", "Temp");
-            
-            // 从 JSON 中恢复数据（包含了 name, affection, chatHistory 以及 portraitPath）
-            newNPC->fromJson(npcJson);
-            
-            // 此时 portraitPath 已经从存档中读取出来了
-            // 调用 reloadTexture() 重新生成 OpenGL 纹理 ID！
-            newNPC->reloadTexture(); 
-            
-            // 将恢复好的 NPC 塞入游戏管理器的列表中
-            targetNPCs.push_back(newNPC);
+    // 3. 恢复当前的 NPC 和跨次元视觉影像
+    if (saveData.contains("activeNPC")) {
+        // 先恢复她的基础档案设定
+        currentNPC.name = saveData.value("profile_name", "");
+        currentNPC.appearance = saveData.value("profile_appearance", "");
+        currentNPC.personality_core = saveData.value("profile_personality", "");
+        currentNPC.hidden_trauma = saveData.value("profile_trauma", "");
+        currentNPC.is_generated = saveData.value("profile_is_generated", false);
+
+        // 重新实例化大脑并灌入记忆
+        activeNPC = std::make_shared<NPC>("Temp", "Temp");
+        activeNPC->fromJson(saveData["activeNPC"]);
+
+        // 【图形学魔法】：根据 JSON 里的路径，重新把立绘塞回 OpenGL 显卡！
+        std::string portraitPath = activeNPC->getPortraitPath();
+        if (!portraitPath.empty()) {
+            npcImageLoader.LoadFromFile(portraitPath);
+        }
+        hasEncounterStarted = true; // 既然能存下来，那肯定已经相遇了
+    }
+
+    // 4. 恢复右侧 UI 的聊天气泡记录
+    uiChatHistory.clear();
+    if (saveData.contains("uiChatHistory")) {
+        for (const auto& item : saveData["uiChatHistory"]) {
+            uiChatHistory.push_back({item["speaker"], item["content"]});
         }
     }
 

@@ -7,7 +7,8 @@
 #include <windows.h>
 #include <future>   
 #include <chrono>
-#include "ProfileGenerator.h" 
+#include "ProfileGenerator.h"
+#include "GameManager.h" 
 #include "Player.h"
 #include "ConfigManager.h"
 #include "NPC.h"

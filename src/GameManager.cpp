@@ -211,6 +211,92 @@ void GameManager::checkAsyncTasks() {
 }
 
 void GameManager::renderUI() {
+    if (ImGui::BeginMainMenuBar()) {
+        if (ImGui::BeginMenu("系统 (System)")) {
+            if (ImGui::MenuItem("读取命运线 (Load Game)")) {
+                showLoadMenu = true;
+                scanSaveFiles(); // 每次打开时刷新本地存档列表
+            }
+            ImGui::EndMenu();
+        }
+        ImGui::EndMainMenuBar();
+    }
+
+    // 2. 现代化的独立记忆面板
+    if (showLoadMenu) {
+        // 让窗口更大一点，比例更协调
+        ImGui::SetNextWindowSize(ImVec2(500, 480), ImGuiCond_FirstUseEver);
+        ImGuiViewport* viewport = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f - 250, 
+                                       viewport->WorkPos.y + viewport->WorkSize.y * 0.5f - 240), 
+                                ImGuiCond_FirstUseEver);
+
+        if (ImGui::Begin("读取命运线 (Load Game)", &showLoadMenu, ImGuiWindowFlags_NoCollapse)) {
+            ImGui::TextColored(ImVec4(0.6f, 0.5f, 0.6f, 1.0f), "—— 沉睡在时间缝隙中的记忆碎片 ——");
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            if (parsedSaves.empty()) {
+                ImGui::SetCursorPosY(ImGui::GetWindowHeight() / 2.0f);
+                ImGui::TextDisabled("当前世界线一片空白，没有任何命运的记录。");
+            } else {
+                // 开启一个支持滑动的内部区域
+                ImGui::BeginChild("SaveCardsRegion", ImVec2(0, 0), false, ImGuiWindowFlags_None);
+                
+                for (int i = 0; i < parsedSaves.size(); ++i) {
+                    const auto& save = parsedSaves[i];
+                    
+                    ImGui::PushID(i); // 极其重要，防止按钮冲突
+                    
+                    // 【卡片底板样式】：纯白底色 + 大圆角边框
+                    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(1.0f, 1.0f, 1.0f, 0.9f));
+                    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
+                    ImGui::BeginChild("Card", ImVec2(0, 85), true, ImGuiWindowFlags_NoScrollbar);
+
+                    // ============ 卡片内部排版 ============
+                    // 第一行：角色名与时间
+                    ImGui::SetCursorPos(ImVec2(15, 15));
+                    ImGui::TextColored(ImVec4(0.85f, 0.45f, 0.55f, 1.0f), "邂逅对象: %s", save.npcName.c_str());
+                    ImGui::SameLine(220); // 固定列宽，保证对齐
+                    ImGui::TextDisabled("时间: %s", save.timeStr.c_str());
+
+                    // 第二行：羁绊进度条
+                    ImGui::SetCursorPos(ImVec2(15, 45));
+                    ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1.0f), "羁绊值:");
+                    ImGui::SameLine(75);
+                    
+                    // 画一个粉红色的进度条
+                    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.96f, 0.64f, 0.69f, 1.0f)); 
+                    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.9f, 0.9f, 0.9f, 1.0f)); // 进度条底色
+                    float progress = save.affection / 100.0f; // 转换为 0.0 ~ 1.0 的比例
+                    ImGui::ProgressBar(progress, ImVec2(160, 16), std::to_string(save.affection).c_str());
+                    ImGui::PopStyleColor(2);
+
+                    // 右侧绝对定位：唤醒按钮
+                    ImGui::SetCursorPos(ImVec2(ImGui::GetWindowWidth() - 110, 25)); // 靠右侧居中
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.85f, 0.9f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+                    if (ImGui::Button("唤醒记忆", ImVec2(90, 35))) {
+                        if (loadGame("saves/" + save.fileName)) {
+                            // 聊天记录里也不暴露丑陋的文件名了
+                            uiChatHistory.push_back({"系统", "（时空震荡，已成功回溯至 " + save.npcName + " 的时间线）"});
+                            showLoadMenu = false; // 读档成功自动关闭窗口
+                        }
+                    }
+                    ImGui::PopStyleColor(2);
+                    // ======================================
+
+                    ImGui::EndChild();
+                    ImGui::PopStyleVar();
+                    ImGui::PopStyleColor();
+                    ImGui::PopID();
+                    ImGui::Spacing(); // 卡片之间的垂直间距
+                }
+                ImGui::EndChild();
+            }
+        }
+        ImGui::End();
+    }
     // 设定全屏窗口
     ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
@@ -255,8 +341,10 @@ void GameManager::renderUI() {
         }
 
         // 居中显示图片
-        ImGui::SetCursorPosX((ImGui::GetWindowWidth() - imageSize.x) * 0.5f);
-        ImGui::SetCursorPosY((ImGui::GetWindowHeight() - imageSize.y) * 0.5f);
+        float offsetX = (availSize.x - imageSize.x) * 0.5f;
+        float offsetY = (availSize.y - imageSize.y) * 0.5f;
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offsetX);
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + offsetY);
         
         // 将 OpenGL 的纹理 ID 喂给 ImGui 画出来
         ImGui::Image((void*)(intptr_t)npcImageLoader.getTextureID(), imageSize);
@@ -276,8 +364,8 @@ void GameManager::renderUI() {
     
     // 世界观设定 UI
     ImGui::TextColored(ImVec4(0.8f, 0.6f, 0.8f, 1.0f), "【当前世界观】");
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 100);
-    ImGui::InputText("##WorldSetting", worldSettingBuf, IM_ARRAYSIZE(worldSettingBuf));
+    ImGui::InputTextMultiline("##WorldSetting", worldSettingBuf, IM_ARRAYSIZE(worldSettingBuf), 
+    ImVec2(ImGui::GetContentRegionAvail().x - 100, ImGui::GetTextLineHeight() * 4));
     ImGui::SameLine();
     
     if (isGeneratingWorld) {
@@ -385,6 +473,28 @@ void GameManager::renderUI() {
     }
     ImGui::SameLine();
 
+    // 添加保存按钮
+    if (ImGui::Button("保存命运线", ImVec2(100, 0))) {
+        // 确保 saves 文件夹存在
+        std::filesystem::create_directory("saves");
+        
+        // 用当前时间戳生成一个独一无二的存档名
+        auto t = std::time(nullptr);
+        auto tm = *std::localtime(&t);
+        char timeStr[32];
+        std::strftime(timeStr, sizeof(timeStr), "%Y%m%d_%H%M%S", &tm);
+        std::string savePath = "saves/save_" + std::string(timeStr) + ".json";
+        
+        // 调用你写好的保存逻辑
+        if (saveGame(savePath)) {
+            uiChatHistory.push_back({"系统", "（当前命运的轨迹已保存至：" + savePath + "）"});
+            scanSaveFiles(); // 更新后台的存档列表
+        } else {
+            uiChatHistory.push_back({"系统", "（存档记录失败，请检查文件权限！）"});
+        }
+    }
+    ImGui::SameLine();
+
     if (activeNPC != nullptr && !hasEncounterStarted) {
         if (isGeneratingEncounter) {
             ImGui::BeginDisabled(); ImGui::Button("正在靠近...", ImVec2(100, 0)); ImGui::EndDisabled();
@@ -449,9 +559,10 @@ void GameManager::renderUI() {
                 std::string hiddenInput = "（系统提示：当前游戏时间是" + timeContext + "）" + userText;
                 
                 //这里捕获了 hiddenInput 发送给后端
-                futureReply = std::async(std::launch::async, [this, hiddenInput]() {
-                    return activeNPC->interact(hiddenInput, mainPlayer);
+                futureReply = std::async(std::launch::async, [activeNPC = this->activeNPC, playerCopy = this->mainPlayer, hiddenInput]() {
+                    return activeNPC->interact(hiddenInput, playerCopy);
                 });
+
             }
         }
         if (disableInput) ImGui::EndDisabled();
@@ -477,6 +588,7 @@ void GameManager::startAITask(std::shared_ptr<NPC> npc, std::future<bool> task) 
 
 void GameManager::scanSaveFiles() {
     availableSaves.clear();
+    parsedSaves.clear();
     const std::string saveDir = "saves"; // 在游戏根目录下的 saves 文件夹
 
     // 如果文件夹不存在，就自动创建一个
@@ -486,10 +598,41 @@ void GameManager::scanSaveFiles() {
     }
 
     // 遍历文件夹，提取所有的 .json 存档文件
-    for (const auto& entry : fs::directory_iterator(saveDir)) {
+    for (const auto& entry : std::filesystem::directory_iterator(saveDir)) {
         if (entry.is_regular_file() && entry.path().extension() == ".json") {
-            // 保存文件名，例如 "save_01.json"
-            availableSaves.push_back(entry.path().filename().string());
+            std::string fileName = entry.path().filename().string();
+            availableSaves.push_back(fileName);
+
+            // 创建一张默认的记忆卡片
+            SaveFileInfo info;
+            info.fileName = fileName;
+            info.npcName = "独处";
+            info.timeStr = "未知";
+            info.affection = 0; 
+
+            // 打开文件提取灵魂数据
+            std::ifstream file(entry.path());
+            if (file.is_open()) {
+                try {
+                    nlohmann::json j;
+                    file >> j;
+                    
+                    // 1. 提取名字和时间
+                    info.npcName = j.value("profile_name", "神秘人");
+                    int timeVal = j.value("currentTime", 0);
+                    info.timeStr = (timeVal == 0) ? "清晨" : (timeVal == 1) ? "午后" : "深夜";
+
+                    // 2. 深入 activeNPC 内部提取好感度
+                    if (j.contains("activeNPC") && j["activeNPC"].is_object()) {
+                        info.affection = j["activeNPC"].value("affection", 0);
+                    }
+                } catch (...) {
+                    info.npcName = "数据碎片(已损坏)";
+                }
+                file.close();
+            }
+            // 将精美的卡片塞入列表
+            parsedSaves.push_back(info);
         }
     }
 }

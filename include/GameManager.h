@@ -15,6 +15,8 @@ enum class TimeOfDay { MORNING, NOON, NIGHT };
 
 class GameManager {
 private:
+    bool showLoadMenu = false;
+
     bool isRunning = true; 
 
     TimeOfDay currentTime = TimeOfDay::MORNING;
@@ -28,10 +30,17 @@ private:
     CharacterProfile currentNPC;
     std::shared_ptr<NPC> activeNPC; // 注意：改用 shared_ptr 方便后续存档和传参
     std::vector<std::pair<std::string, std::string>> uiChatHistory;
-    char worldSettingBuf[256];
+    char worldSettingBuf[2048];
 
     // ================= [存档系统变量] =================
     std::vector<std::string> availableSaves;
+    struct SaveFileInfo {
+    std::string fileName;  // 内部真实文件名（如 save_123.json，隐藏不显示）
+    std::string npcName;   // 邂逅对象的名字
+    std::string timeStr;   // 游戏内时间阶段
+    int affection;         // 核心：好感度/羁绊值
+    };
+    std::vector<SaveFileInfo> parsedSaves;
 
     // ================= [异步状态机变量] =================
     bool isAIBusy = false;

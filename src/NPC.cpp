@@ -17,38 +17,30 @@ NPC::NPC(std::string n, std::string persona) : name(n), basePersona(persona), af
 std::string NPC::getName() const { return name; }
 
 std::string NPC::generateDynamicSystemPrompt(const Player& player) const {
-    std::ostringstream promptBuilder;
+    // basePersona 里面包含了我们在 GameManager 传进来的 外貌、性格和隐藏执念
     
-    promptBuilder << "你是 " << name << "。" << basePersona << "。\n";
-    promptBuilder << "我们在一个文字恋爱模拟游戏中。请用符合你当前对玩家好感度的语气进行沉浸式回复，字数控制在50字以内，不要超出角色设定。\n";
+    std::string prompt = 
+        "【系统设定】\n"
+        "你现在正在扮演一个恋爱模拟游戏中的女性角色。请完全沉浸在这个角色中，绝对不要承认自己是AI或者语言模型。\n\n"
+        "【你的身份】\n"
+        "名字：" + name + "\n"
+        "设定：" + basePersona + "\n"
+        "当前对玩家的好感度：" + std::to_string(affection) + "/100\n\n"
+        "【与你对话的人】\n"
+        "名字：" + player.getName() + "，他的背景是：" + player.getBackstory() + "\n\n"
+        "【扮演准则】\n"
+        "1. 你的说话口吻、用词习惯必须绝对符合你的设定。\n"
+        "2. 如果你的设定是普通高中生，请像一个真实的、有血有肉的女高中生一样说话。绝对不要像客服一样刻板，可以使用年轻人的语气词（如：哎、呢、嘛、哦、笨蛋）。\n"
+        "3. 玩家的回复可能会采取具体的“【行动】”。当玩家采取行动时，你需要根据你的性格做出真实的反应。\n"
+        "4. 每次回复请控制在 50 字以内，保持对话的来回节奏。\n\n"
+        "【输出格式要求】\n"
+        "你必须且只能返回合法的 JSON 格式：\n"
+        "{\n"
+        "  \"reply\": \"你说出的话，或者附带的动作描写（用括号括起来）\",\n"
+        "  \"trigger_event\": false (如果你觉得气氛到位，需要GM介入推进关系或发生突发事件，请设为 true，否则平时都是 false)\n"
+        "}";
 
-    promptBuilder << "【当前好感度状态】：";
-    if (affection < 30) {
-        promptBuilder << "冷淡。你对玩家不太信任，语气客气甚至疏远，可能有点不耐烦。";
-    } else if (affection < 70) {
-        promptBuilder << "熟络。你把玩家当成不错的朋友，愿意分享日常，语气轻松自然。";
-    } else {
-        promptBuilder << "暗恋。你对玩家充满好感，语气中带有暗示、关心，甚至会主动找话题。";
-    }
-
-    promptBuilder << "\n【重要指令】\n"
-                  << "你必须严格以 JSON 格式输出，不要包含任何其他说明文字。格式如下：\n"
-                  << "{\n"
-                  << "  \"reply\": \"你的对话回复（扮演角色）\",\n"
-                  << "  \"affection_change\": 好感度变化值（-5到+5的整数）,\n"
-                  << "  \"trigger_event\": true/false (核心逻辑：当且仅当话题结束陷入僵局、情绪到达高潮、或者你认为当前场景需要外部力量推进剧情时，设为 true，呼叫系统介入；正常聊天时必须为 false)\n"
-                  << "}";
-
-    // 【将玩家背景注入给 AI
-    promptBuilder << "\n【玩家当前面板信息】\n"
-                  << "玩家名字：" << player.getName() << "\n"
-                  << "玩家背景设定：" << player.getBackstory() << "（请结合此背景对玩家产生特定的主观印象）\n" 
-                  << "魅力值：" << player.getCharm() << "（影响你对ta外貌的初始判断）\n"
-                  << "才智值：" << player.getIntelligence() << "（影响你们学术/深度交流的顺畅度）\n"
-                  << "财富值：" << player.getWealth() << "（影响ta展现出的财力）\n"
-                  << "*注意：请根据你的人设性格，结合玩家的背景和属性，适当在字里行间对玩家做出潜在的反应。但不要像机器人一样直接报数字。\n";
-
-    return promptBuilder.str();
+    return prompt;
 }
 
 void NPC::injectSceneMemory(const std::string& sceneDescription) {
@@ -215,7 +207,7 @@ std::future<bool> NPC::generatePortraitAsync() {
                 
                 auto dl_res = dl_cli.Get(path);
                 if (dl_res && dl_res->status == 200) {
-                    std::string savePath = "current_npc_portrait.png";
+                    std::string savePath = "saves/portrait_" + name + "_" + std::to_string(std::time(nullptr)) + ".png";
                     std::ofstream file(savePath, std::ios::binary);
                     file.write(dl_res->body.c_str(), dl_res->body.size());
                     file.close();

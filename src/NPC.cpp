@@ -30,9 +30,9 @@ std::string NPC::generateDynamicSystemPrompt(const Player& player) const {
         "名字：" + player.getName() + "，他的背景是：" + player.getBackstory() + "\n\n"
         "【扮演准则】\n"
         "1. 你的说话口吻、用词习惯必须绝对符合你的设定。\n"
-        "2. 如果你的设定是普通高中生，请像一个真实的、有血有肉的女高中生一样说话。绝对不要像客服一样刻板，可以使用年轻人的语气词（如：哎、呢、嘛、哦、笨蛋）。\n"
+        "2. 如果你的设定是高中生，请像一个真实的、有血有肉的女高中生一样说话。绝对不要像客服一样刻板，可以使用年轻人的语气词（如：哎、呢、嘛、哦、笨蛋）。\n"
         "3. 玩家的回复可能会采取具体的“【行动】”。当玩家采取行动时，你需要根据你的性格做出真实的反应。\n"
-        "4. 每次回复请控制在 50 字以内，保持对话的来回节奏。\n\n"
+        "4. 每次回复请控制在 200 字以内，保持对话的来回节奏。\n\n"
         "【输出格式要求】\n"
         "你必须且只能返回合法的 JSON 格式：\n"
         "{\n"
@@ -86,57 +86,81 @@ NPCResponse NPC::interact(const std::string& playerInput, const Player& player) 
         {"Content-Type", "application/json"}
     };
 
-    std::cout << "[System] 正在等待 " << name << " 的思考..." << std::endl;
-    cli.set_read_timeout(15, 0); 
-    auto res = cli.Post("/chat/completions", headers, bodyStr, "application/json");
-
-    // 3. 解析返回结果
-    if (res && res->status == 200) {
-        try {
-            json responseJson = json::parse(res->body);
-            std::string aiContentStr = responseJson["choices"][0]["message"]["content"];
-            
-            // 有时候 AI 会返回包裹着 ```json ``` 的字符串，简单做一个清理
-            size_t jsonStart = aiContentStr.find('{');
-            size_t jsonEnd = aiContentStr.rfind('}');
-            if (jsonStart != std::string::npos && jsonEnd != std::string::npos && jsonEnd > jsonStart) {
-                aiContentStr = aiContentStr.substr(jsonStart, jsonEnd - jsonStart + 1);
-            }
-
-            // 解析 AI 返回的 JSON 字符串
-            json aiResult = json::parse(aiContentStr);
-            std::string reply = aiResult.value("reply", "……（沉默）");
-            int affectionChange = aiResult.value("affection_change", 0);
-            bool triggerEvent = aiResult.value("trigger_event", false);
-
-            // 将本次对话存入历史记录
-            chatHistory.push_back({{"role", "user"}, {"content", playerInput}});
-            // 注意：存入历史记录的是纯文本 reply，不要把 json 存进去干扰后面的对话
-            chatHistory.push_back({{"role", "assistant"}, {"content", reply}}); 
-
-            // 维护滑动窗口，防止 Token 爆炸
-            while (chatHistory.size() > MAX_HISTORY) {
-                chatHistory.pop_front();
-            }
-
-            // 动态触发好感度变化
-            if (affectionChange != 0) {
-                changeAffection(affectionChange);
-            }
-
-            return {reply, triggerEvent};
-
-        } catch (const std::exception& e) {
-            return {"[Error] API JSON 解析失败: " + std::string(e.what()), false};
+    int max_retries = 3;
+    for (int attempt = 0; attempt < max_retries; ++attempt) {
+        if (attempt > 0) {
+            std::cout << "[System] 重新尝试唤醒 " << name << " 的思绪... (第 " << attempt + 1 << " 次尝试)" << std::endl;
+        } else {
+            std::cout << "[System] 正在等待 " << name << " 的思考..." << std::endl;
         }
-    } else {
-        std::string errorMsg = res ? std::to_string(res->status) : "网络连接失败/超时";
-        if(res && res->status != 200) {
-            errorMsg += " - Body: " + res->body; 
+
+        cli.set_read_timeout(30, 0); 
+        auto res = cli.Post("/chat/completions", headers, bodyStr, "application/json");
+
+        // 3. 解析返回结果
+        if (res && res->status == 200) {
+            std::string aiContentStr = ""; 
+            try {
+                json responseJson = json::parse(res->body);
+                aiContentStr = responseJson["choices"][0]["message"]["content"];
+                
+                // 如果全为空格，立刻抛出异常触发重试
+                if (aiContentStr.find_first_not_of(" \t\n\r") == std::string::npos) {
+                    throw std::runtime_error("AI 返回为空");
+                }
+
+                // 清理多余文本提取 JSON
+                size_t jsonStart = aiContentStr.find('{');
+                size_t jsonEnd = aiContentStr.rfind('}');
+                if (jsonStart != std::string::npos && jsonEnd != std::string::npos && jsonEnd >= jsonStart) {
+                    aiContentStr = aiContentStr.substr(jsonStart, jsonEnd - jsonStart + 1);
+                } else {
+                    throw std::runtime_error("未找到JSON括号截断");
+                }
+
+                // 解析 JSON
+                json aiResult = json::parse(aiContentStr);
+                std::string reply = aiResult.value("reply", "……（沉默）");
+                int affectionChange = aiResult.value("affection_change", 0);
+                bool triggerEvent = aiResult.value("trigger_event", false);
+
+                // 只有成功解析，才能将本次对话存入历史记录
+                chatHistory.push_back({{"role", "user"}, {"content", playerInput}});
+                chatHistory.push_back({{"role", "assistant"}, {"content", reply}}); 
+
+                while (chatHistory.size() > MAX_HISTORY) {
+                    chatHistory.pop_front();
+                }
+
+                if (affectionChange != 0) {
+                    changeAffection(affectionChange);
+                }
+
+                // 【成功返回，跳出循环】
+                return {reply, triggerEvent};
+
+            } catch (const std::exception& e) {
+                std::cerr << "[Debug] 第 " << attempt + 1 << " 次解析失败: " << e.what() << std::endl;
+                // 如果是最后一次尝试依然失败，则跳出并报错给玩家
+                if (attempt == max_retries - 1) {
+                    std::cerr << "[Debug] 最终失败，API 原始 Body 数据: \n" << res->body << std::endl;
+                    return {"[Error] 角色思绪有些混乱(多次重试均失败) 请再试一次", false};
+                }
+            }
+        } else {
+            // 网络通信层面的失败
+            std::cerr << "[Debug] 第 " << attempt + 1 << " 次请求网络失败。" << std::endl;
+            if (attempt == max_retries - 1) {
+                std::string errorMsg = res ? std::to_string(res->status) : "网络连接失败/超时";
+                if(res && res->status != 200) errorMsg += " - Body: " + res->body; 
+                return {"[Error] AI 通信超时: " + errorMsg, false};
+            }
         }
-        return {"[Error] AI 通信失败: " + errorMsg, false};
-    }
+    } // 结束循环
+    
+    return {"[Error] 未知错误", false};
 }
+
 void NPC::generatePortraitAPI() const {
     std::cout << "[System] " << name << " 害羞地转过了头。(生图功能暂未开启)" << std::endl;
 }
@@ -163,7 +187,7 @@ std::future<bool> NPC::generatePortraitAsync() {
         apiKey.erase(apiKey.find_last_not_of(" ") + 1);
 
         // 构造生图提示词
-        std::string prompt = "二次元动漫风格，精美视觉小说角色立绘，杰作，高质量。" + appearanceDesc;
+        std::string prompt = "京都动画风格的二次元角色半身立绘，极其精细的唯美光影，画风温馨治愈，高质量视觉小说CG，人物衣着得体日常。京都动画风格的二次元角色半身立绘，极其精细的唯美光影，画风温馨治愈，高质量视觉小说CG，人物衣着得体日常。" + appearanceDesc;
 
         json requestBody = {
             {"model", "cogview-4-250304"}, // 目前智谱最新的高质量生图模型

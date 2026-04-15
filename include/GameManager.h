@@ -81,6 +81,7 @@ public:
     void initGame();
     void runLoop(); 
     bool isGameRunning() const { return isRunning; } 
+    void startNewGame();
 
     // 存档与防抖接口
     void scanSaveFiles();

@@ -56,18 +56,22 @@ NPCResponse NPC::interact(const std::string& playerInput, const Player& player) 
     
     // 1. 构建 messages 数组
     json messages = json::array();
-    
-    // 1.1 压入 System Prompt
+
+    // 1.1 压入 System Prompt (系统提示词通常不为空)
     messages.push_back({{"role", "system"}, {"content", systemPrompt}});
-    
+
     // 1.2 压入历史记忆 (Context)
     for (const auto& msg : chatHistory) {
-        messages.push_back(msg);
+        // 【修改点】：增加非空校验
+        // 只有当消息内容不为空时，才加入发送列表
+        if (msg.contains("content") && !msg["content"].get<std::string>().empty()) {
+            messages.push_back(msg);
+        }
     }
-    
+
     // 1.3 压入玩家本次输入
     messages.push_back({{"role", "user"}, {"content", playerInput}});
-
+    
     json requestBody = {
         {"model", "deepseek-chat"},
         {"messages", messages},
@@ -95,7 +99,7 @@ NPCResponse NPC::interact(const std::string& playerInput, const Player& player) 
         }
 
         cli.set_read_timeout(30, 0); 
-        auto res = cli.Post("/chat/completions", headers, bodyStr, "application/json");
+        auto res = cli.Post("/v1/chat/completions", headers, bodyStr, "application/json");
 
         // 3. 解析返回结果
         if (res && res->status == 200) {
@@ -121,6 +125,14 @@ NPCResponse NPC::interact(const std::string& playerInput, const Player& player) 
                 // 解析 JSON
                 json aiResult = json::parse(aiContentStr);
                 std::string reply = aiResult.value("reply", "……（沉默）");
+                
+                if (!reply.empty()) {
+                chatHistory.push_back({{"role", "user"}, {"content", playerInput}});
+                chatHistory.push_back({{"role", "assistant"}, {"content", reply}});
+                } else {
+                return {"[系统提示] 对方陷入了长久的沉默，请试着换个话题。", false};
+                }
+
                 int affectionChange = aiResult.value("affection_change", 0);
                 bool triggerEvent = aiResult.value("trigger_event", false);
 

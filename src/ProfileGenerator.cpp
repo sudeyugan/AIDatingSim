@@ -65,7 +65,7 @@ std::future<CharacterProfile> ProfileGenerator::generateRandomProfileAsync(const
             "必须且只能输出合法的 JSON 格式，字段如下：\n"
             "{\n"
             "  \"name\": \"角色的全名\",\n"
-            "  \"appearance\": \"外貌描写（发型、发色、瞳色、服装细节，用于AI绘画）\",\n"
+            "  \"appearance\": \"外貌描写（发型、发色、瞳色、服装细节）\",\n"
             "  \"personality_core\": \"核心性格特点\",\n"
             "  \"hidden_trauma\": \"隐藏的烦恼或执念\",\n"
             "  \"initial_attitude\": \"对主角的初始态度\",\n"
@@ -153,7 +153,7 @@ std::future<GameEvent> ProfileGenerator::generateRandomEventAsync(const std::str
         // 1. 世界观兜底：空白则默认为普通高中
         std::string actualWorld = worldSetting.empty() ? "现代日常都市，普通的高中校园" : worldSetting;
 
-        // 2. 注入强力约束的 Prompt
+        // 2. 注入强力约束的 Prompt 【核心修改点：要求 AI 输出每个选项对应的检定属性】
         std::string prompt = 
             "你是一个极其优秀的 TRPG Game Master (游戏主持)。\n"
             "【当前世界观】：" + actualWorld + "\n"
@@ -161,33 +161,45 @@ std::future<GameEvent> ProfileGenerator::generateRandomEventAsync(const std::str
             "【当前互动的 NPC】：" + npc.name + "，性格：" + npc.personality_core + "，隐藏执念：" + npc.hidden_trauma + "\n"
             "【最近的对话上下文】\n" + chatContext + "\n\n"
             "【核心约束规则】\n"
-            "1. 如果【当前世界观】是“现代日常”、“普通高中”或类似设定，绝对禁止出现魔法、科幻、超能力、凶杀、黑帮等脱离日常的夸张要素！事件必须是普通的日常风波（例如：突然下雨没带伞、值日时的意外、尴尬的肢体接触、遇到严厉的老师、氛围暧昧的沉默等）。\n"
+            "1. 如果【当前世界观】是“现代日常”、“普通高中”或类似设定，绝对禁止出现魔法、科幻、超能力、凶杀、黑帮等脱离日常的夸张要素！事件必须是普通的日常风波。\n"
             "2. 如果世界观是其他特定背景，请严格贴合该设定的底层逻辑来生成事件。\n\n"
             "NPC 刚刚发出了推进剧情的信号。请你务必【无缝顺承当前的对话情境】，生成一个推动故事发展的【剧情事件】。\n"
-            "请提供 3 个符合当前情境的不同行动选项（例如：A.主动询问 B.静观其变 C.温柔解围），尽量让选项体现出不同的性格倾向。\n"
+            "请提供 3 个符合当前情境的不同行动选项，并为每个选项指定一个最相关的检测属性（只能是以下英文单词之一: physique, intellect, charm, wealth, empathy, luck）。\n"
             "必须严格输出纯 JSON 格式：\n"
             "{\n"
             "  \"description\": \"事件或场景的生动描写（注重画面感和氛围，50-100字左右）\",\n"
-            "  \"choices\": [\"选项1文字\", \"选项2文字\", \"选项3文字\"]\n"
+            "  \"choices\": [\n"
+            "    {\"text\": \"强行突破阻碍\", \"stat\": \"physique\"},\n"
+            "    {\"text\": \"尝试温柔说服\", \"stat\": \"charm\"},\n"
+            "    {\"text\": \"静观其变\", \"stat\": \"luck\"}\n"
+            "  ]\n"
             "}";
 
         // 3. 调用重构后的网络通信接口（强制 JSON 模式）
         std::string response = callLLMAPI(prompt, true);
 
-        // 4. 解析与安全防崩溃兜底
+        // 4. 解析与安全防崩溃兜底 【核心修改点：按 EventChoice 结构体解析】
         try {
             json eventJson = json::parse(response);
             event.description = eventJson.value("description", "一阵微风吹过，气氛变得有些微妙。");
             
             if (eventJson.contains("choices") && eventJson["choices"].is_array()) {
                 for (const auto& choice : eventJson["choices"]) {
-                    event.choices.push_back(choice.get<std::string>());
+                    // 把 JSON 对象转化为 EventChoice 结构体推入数组
+                    event.choices.push_back({
+                        choice.value("text", "静观其变"), 
+                        choice.value("stat", "luck") // 如果 AI 忘记写属性，兜底用 luck
+                    });
                 }
             }
             
-            // 极端兜底：如果 AI 没生成选项，强制塞入三个通用选项，防止游戏 UI 没有按钮可点
+            // 极端兜底：如果 AI 没生成选项，强制塞入三个带属性的通用选项
             if (event.choices.empty()) {
-                event.choices = {"静观其变", "转移话题", "微微一笑"};
+                event.choices = {
+                    {"静观其变", "luck"}, 
+                    {"尝试交流", "empathy"}, 
+                    {"微微一笑", "charm"}
+                };
             }
             event.is_valid = true;
 
@@ -195,7 +207,11 @@ std::future<GameEvent> ProfileGenerator::generateRandomEventAsync(const std::str
             std::cerr << "解析事件 JSON 失败: " << response << std::endl;
             // 发生异常时，给玩家一个安全的台阶下
             event.description = "（系统旁白：命运的齿轮似乎短暂地卡住了，但生活还在继续。）";
-            event.choices = {"尝试继续聊天", "保持沉默", "深呼吸"};
+            event.choices = {
+                {"尝试继续聊天", "charm"}, 
+                {"保持沉默", "intellect"},
+                {"深呼吸", "physique"}
+            };
             event.is_valid = true; 
         }
 

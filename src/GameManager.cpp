@@ -23,16 +23,12 @@ void GameManager::advanceTime() {
     // 根据当前时间推进到下一个时间段，并向 UI 聊天记录中插入系统旁白
     if (currentTime == TimeOfDay::MORNING) { 
         currentTime = TimeOfDay::NOON; 
-        uiChatHistory.push_back({"系统", "（时间流逝，转眼到了午后...）"});
     }
     else if (currentTime == TimeOfDay::NOON) { 
         currentTime = TimeOfDay::NIGHT; 
-        uiChatHistory.push_back({"系统", "（夜幕降临，到了深夜...）"});
     }
     else { 
-        // 如果是深夜，推进后则进入第二天清晨
         currentTime = TimeOfDay::MORNING; 
-        uiChatHistory.push_back({"系统", "（朝阳升起，新的一天开始了。）"});
     }
 }
 
@@ -150,7 +146,18 @@ void GameManager::checkAsyncTasks() {
             isWaitingForReply = false;
             
             chatTurns++; // 增加回合数
-            if (response.ready_to_transition && !isGeneratingTransition) {
+            // 1. 【优先】判定是否触发命运事件（高潮打断）
+            if (response.trigger_event && !isEventActive) {
+                isGeneratingEvent = true;
+                std::string recentContext = "";
+                int startIdx = std::max(0, (int)uiChatHistory.size() - 6);
+                for (int i = startIdx; i < uiChatHistory.size(); ++i) {
+                    recentContext += uiChatHistory[i].first + ": " + uiChatHistory[i].second + "\n";
+                }
+                futureEvent = ProfileGenerator::generateRandomEventAsync(std::string(worldSettingBuf), mainPlayer, currentNPC, recentContext);
+            }
+            // 2. 【其次】如果没有任何突发事件，再去平淡地判定是否该转场/回家了
+            else if (response.ready_to_transition && !isGeneratingTransition) {
                 isGeneratingTransition = true;
                 
                 // 提取最近 4 句话给 GM 作为判断依据
@@ -166,17 +173,6 @@ void GameManager::checkAsyncTasks() {
                 uiChatHistory.push_back({"系统", "（镜头流转，场景重构中...）"});
                 futureTransition = ProfileGenerator::generateTransitionSceneAsync(std::string(worldSettingBuf), recentContext, timeCtx);
                 ImGui::SetScrollHereY(1.0f);
-            }
-
-            // 2. 判定是否触发命运事件
-            else if (response.trigger_event && !isEventActive) {
-                isGeneratingEvent = true;
-                std::string recentContext = "";
-                int startIdx = std::max(0, (int)uiChatHistory.size() - 6);
-                for (int i = startIdx; i < uiChatHistory.size(); ++i) {
-                    recentContext += uiChatHistory[i].first + ": " + uiChatHistory[i].second + "\n";
-                }
-                futureEvent = ProfileGenerator::generateRandomEventAsync(std::string(worldSettingBuf), mainPlayer, currentNPC, recentContext);
             }
         }
     }
@@ -620,7 +616,7 @@ void GameManager::renderUI() {
         bool pressed = ImGui::InputText("##ChatInput", inputBuf, IM_ARRAYSIZE(inputBuf), ImGuiInputTextFlags_EnterReturnsTrue);
         ImGui::SameLine();
         
-        bool disableInput = isWaitingForReply || activeNPC == nullptr || !hasEncounterStarted;
+        bool disableInput = isWaitingForReply || isGeneratingTransition || activeNPC == nullptr || !hasEncounterStarted;
         if (disableInput) ImGui::BeginDisabled();
         
         if (ImGui::Button("发送") || (pressed && !disableInput)) {

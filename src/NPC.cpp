@@ -144,13 +144,14 @@ NPCResponse NPC::interact(const std::string& playerInput, const Player& player) 
 
                 int affectionChange = aiResult.value("affection_change", 0);
                 bool triggerEvent = aiResult.value("trigger_event", false);
+                bool readyToTransition = aiResult.value("ready_to_transition", false); 
 
                 // 只有成功解析，才能将本次对话存入历史记录
                 chatHistory.push_back({{"role", "user"}, {"content", playerInput}});
 
                 json aiMemoryJson = {
                     {"reply", reply},
-                    {"trigger_event", triggerEvent}
+                    {"trigger_event", triggerEvent},
                     {"ready_to_transition", readyToTransition}
                 };
                 if (aiResult.contains("affection_change")) {
@@ -218,7 +219,7 @@ std::future<bool> NPC::generatePortraitAsync() {
         apiKey.erase(apiKey.find_last_not_of(" ") + 1);
 
         // 构造生图提示词
-        std::string prompt = "京都动画风格的二次元角色半身立绘，极其精细的唯美光影，画风温馨治愈，高质量视觉小说CG，人物衣着得体日常。京都动画风格的二次元角色半身立绘，极其精细的唯美光影，画风温馨治愈，高质量视觉小说CG，人物衣着得体日常。" + appearanceDesc;
+        std::string prompt = "京都动画风格的二次元角色半身立绘，极其精细的唯美光影，画风温馨治愈，高质量视觉小说CG，人物衣着得体日常。京都动画风格的二次元角色半身立绘，高质量视觉小说CG，人物衣着得体日常。" + appearanceDesc;
 
         json requestBody = {
             {"model", "cogview-4-250304"}, // 目前智谱最新的高质量生图模型

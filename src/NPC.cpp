@@ -31,12 +31,17 @@ std::string NPC::generateDynamicSystemPrompt(const Player& player) const {
         "2. 如果你的设定是高中生，请像一个真实的、有血有肉的女高中生一样说话。绝对不要像客服一样刻板，可以使用年轻人的语气词（如：哎、呢、嘛、哦、笨蛋）。\n"
         "3. 玩家的回复可能会采取具体的“【行动】”。当玩家采取行动时，你需要根据你的性格做出真实的反应。\n"
         "4. 每次回复请控制在 200 字以内，保持对话的来回节奏。\n\n"
+        "【被动感知检定 (Passive Check)】\n"
+        "当前玩家属性：共情=" + std::to_string(player.getEmpathy()) + "，智识=" + std::to_string(player.getIntellect()) + "。\n"
+        "如果玩家的某项属性 >= 70，他就能察觉到普通人注意不到的隐藏细节。\n"
+        "请务必判断当前情境，如果触发了感知，请将这些【隐藏信息】（如你极力掩饰的微表情、场景中暗藏的线索）放在 'passive_insights' 数组中返回；如果没有触发，请返回空数组。\n\n"
         "【输出格式要求】\n"
         "你必须且只能返回合法的纯 JSON 格式，绝不能包含任何 Markdown 标记或额外注释！格式如下：\n"
         "{\n"
         "  \"reply\": \"你说出的话，或者附带的动作描写（用括号括起来）\",\n"
         "  \"trigger_event\": false\n"
         "  \"ready_to_transition\": false\n"
+        "  \"passive_insights\": [\"(共情检定成功) 你敏锐地察觉到她握紧了衣角，似乎在紧张。\"] \n"
         "}\n"
         "【字段说明】\n"
         "- trigger_event: 默认为 false。如果你觉得气氛到位，需要GM介入推进关系或发生突发事件，请设为 true。"
@@ -145,6 +150,13 @@ NPCResponse NPC::interact(const std::string& playerInput, const Player& player) 
                 int affectionChange = aiResult.value("affection_change", 0);
                 bool triggerEvent = aiResult.value("trigger_event", false);
                 bool readyToTransition = aiResult.value("ready_to_transition", false); 
+
+                std::vector<std::string> insights;
+                if (aiResult.contains("passive_insights") && aiResult["passive_insights"].is_array()) {
+                    for (const auto& insight : aiResult["passive_insights"]) {
+                        insights.push_back(insight.get<std::string>());
+                    }
+                }
 
                 // 只有成功解析，才能将本次对话存入历史记录
                 chatHistory.push_back({{"role", "user"}, {"content", playerInput}});

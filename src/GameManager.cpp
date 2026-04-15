@@ -143,6 +143,10 @@ void GameManager::checkAsyncTasks() {
             
             // 1. NPC 的话上屏
             uiChatHistory.push_back({activeNPC->getName(), response.reply}); 
+            for (const auto& insight : response.passive_insights) {
+                uiChatHistory.push_back({"[暗中洞察]", insight}); 
+            }
+            
             isWaitingForReply = false;
             
             chatTurns++; // 增加回合数
@@ -517,16 +521,31 @@ void GameManager::renderUI() {
     
     for (const auto& chat : uiChatHistory) {
         ImVec4 textColor;
-        if (chat.first == "系统" || chat.first == "【GM 场景导入】" || chat.first == "【GM 突发事件】") {
-            textColor = ImVec4(0.6f, 0.6f, 0.6f, 1.0f); 
+        bool isInsight = false; // 用于标记是否是洞察信息
+
+        // 1. 分配颜色
+        if (chat.first == "[暗中洞察]") {
+            textColor = ImVec4(0.8f, 0.6f, 1.0f, 1.0f); // 神秘的紫色/亮紫色
+            isInsight = true;
+        } else if (chat.first == "系统" || chat.first == "【GM 场景导入】" || chat.first == "【GM 突发事件】") {
+            textColor = ImVec4(0.6f, 0.6f, 0.6f, 1.0f); // 旁白灰色
         } else if (chat.first == mainPlayer.getName()) {
-            textColor = ImVec4(0.5f, 0.7f, 0.9f, 1.0f); 
+            textColor = ImVec4(0.5f, 0.7f, 0.9f, 1.0f); // 玩家蓝色
         } else {
-            textColor = ImVec4(0.9f, 0.5f, 0.6f, 1.0f); 
+            textColor = ImVec4(0.9f, 0.5f, 0.6f, 1.0f); // 女主粉色
         }
         
+        // 2. 渲染文本
         ImGui::PushStyleColor(ImGuiCol_Text, textColor);
-        ImGui::TextWrapped("%s: %s", chat.first.c_str(), chat.second.c_str());
+        
+        if (isInsight) {
+            // 如果是洞察信息，把冒号去掉，改成空格，比如：[暗中洞察] (共情检定成功) 她手心出汗了...
+            ImGui::TextWrapped("%s %s", chat.first.c_str(), chat.second.c_str());
+        } else {
+            // 普通对话
+            ImGui::TextWrapped("%s: %s", chat.first.c_str(), chat.second.c_str());
+        }
+        
         ImGui::PopStyleColor();
         ImGui::Spacing();
     }
@@ -595,17 +614,53 @@ void GameManager::renderUI() {
     // 常规聊天模式 VS 事件选择模式
     if (isEventActive) {
         for (size_t i = 0; i < currentEvent.choices.size(); ++i) {
-            if (ImGui::Button(currentEvent.choices[i].c_str())) {
-                std::string chosenAction = currentEvent.choices[i]; 
-                uiChatHistory.push_back({mainPlayer.getName(), "【行动】: " + chosenAction});
+                if (ImGui::Button(buttonLabel.c_str())) {
+                
+                int playerStatValue = 50; 
+                if (choiceStat == "physique") playerStatValue = mainPlayer.getPhysique();
+                else if (choiceStat == "intellect") playerStatValue = mainPlayer.getIntellect();
+                else if (choiceStat == "charm") playerStatValue = mainPlayer.getCharm();
+                else if (choiceStat == "wealth") playerStatValue = mainPlayer.getWealth();
+                else if (choiceStat == "empathy") playerStatValue = mainPlayer.getEmpathy();
+                else if (choiceStat == "luck") playerStatValue = mainPlayer.getLuck();
+
+                // 【终极重构】：D100 命运掷骰规则
+                int roll = rand() % 100 + 1; // 1 - 100
+                std::string rollResult;
+                std::string exactRollDesc = "(掷出: " + std::to_string(roll) + " / 要求: " + std::to_string(playerStatValue) + ")";
+
+                // 判断逻辑：加入大成功与大失败
+                if (roll <= 5) {
+                    rollResult = "【大成功 (Critical Success)】";
+                } else if (roll > 95) {
+                    rollResult = "【大失败 (Critical Failure)】";
+                } else if (roll <= playerStatValue) {
+                    rollResult = "【检定成功 (Success)】";
+                } else {
+                    rollResult = "【检定失败 (Failure)】";
+                }
+
+                // UI 上屏：让玩家感受到掷骰子的刺激感
+                uiChatHistory.push_back({mainPlayer.getName(), "尝试: " + choiceText + " [" + displayStat + "检定]"});
+                uiChatHistory.push_back({"系统", "命运判定：" + rollResult + " " + exactRollDesc});
+                
                 isEventActive = false;
                 isWaitingForReply = true;
                 
-                std::string timeCtx = (currentTime == TimeOfDay::MORNING) ? "清晨" : 
-                                      (currentTime == TimeOfDay::NOON) ? "午后" : "深夜";
+                // 【终极重构】：给大模型极其详尽的战报上下文！
+                std::string timeContext = (currentTime == TimeOfDay::MORNING) ? "清晨" : 
+                                          (currentTime == TimeOfDay::NOON) ? "午后" : "深夜";
                 
-                futureReply = std::async(std::launch::async, [this, chosenAction, timeCtx]() {
-                    std::string contextualInput = "（系统提示：当前时间是" + timeCtx + "，我采取了行动：" + chosenAction + "）";
+                futureReply = std::async(std::launch::async, [this, choiceText, rollResult, roll, timeContext]() {
+                    std::string contextualInput = 
+                        "（系统机制输入，请勿暴露给玩家：当前时间是" + timeContext + "。\n"
+                        "玩家采取了行动：【" + choiceText + "】。\n"
+                        "底层 TRPG 引擎进行了掷骰判定，结果为：" + rollResult + "（点数 " + std::to_string(roll) + "）。\n"
+                        "指令：请作为 GM 和 NPC 的集合体，严格根据这个判定结果推进剧情。\n"
+                        "1. 如果是大成功，请描写玩家的行动引发了极其帅气、完美的奇迹反应，NPC 好感度飙升。\n"
+                        "2. 如果是大失败，请描写极其社死、倒霉、甚至搞笑的意外，NPC 会感到震惊或无语。\n"
+                        "3. 请用第一人称（NPC 视角）或第二人称旁白融合的方式作答。）";
+                        
                     return activeNPC->interact(contextualInput, mainPlayer);
                 });
             }

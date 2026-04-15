@@ -8,6 +8,14 @@
 
 class ProfileGenerator {
 public:
+
+    // 生成过场旁白，返回 <旁白文本, 是否推进了宏观时间>
+    static std::future<std::pair<std::string, bool>> generateTransitionSceneAsync(
+        const std::string& worldSetting, 
+        const std::string& recentContext, 
+        const std::string& currentTimeStr
+    );
+
     // 采用异步方式生成，防止等待 API 返回时卡死整个 GUI 界面
     static std::future<CharacterProfile> generateRandomProfileAsync();
     static std::future<std::pair<std::string, std::string>> generatePlayerProfileAsync();

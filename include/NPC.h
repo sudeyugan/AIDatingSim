@@ -12,6 +12,7 @@ class Player;
 struct NPCResponse {
     std::string reply;
     bool trigger_event; // 是否呼叫 GM 触发事件
+    bool ready_to_transition;// NPC认为当前场景是否可以结束
 };
 
 class NPC {

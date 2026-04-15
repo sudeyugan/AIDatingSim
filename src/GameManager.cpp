@@ -150,13 +150,26 @@ void GameManager::checkAsyncTasks() {
             isWaitingForReply = false;
             
             chatTurns++; // 增加回合数
-            if (chatTurns >= 5) { // 设定每 5 个回合时间流逝一次（你可以自己调整难度）
-                advanceTime();
-                chatTurns = 0; // 重置计数器
+            if (response.ready_to_transition && !isGeneratingTransition) {
+                isGeneratingTransition = true;
+                
+                // 提取最近 4 句话给 GM 作为判断依据
+                std::string recentContext = "";
+                int startIdx = std::max(0, (int)uiChatHistory.size() - 4);
+                for (int i = startIdx; i < uiChatHistory.size(); ++i) {
+                    recentContext += uiChatHistory[i].first + ": " + uiChatHistory[i].second + "\n";
+                }
+                
+                std::string timeCtx = (currentTime == TimeOfDay::MORNING) ? "清晨" : 
+                                      (currentTime == TimeOfDay::NOON) ? "午后" : "深夜";
+                                          
+                uiChatHistory.push_back({"系统", "（镜头流转，场景重构中...）"});
+                futureTransition = ProfileGenerator::generateTransitionSceneAsync(std::string(worldSettingBuf), recentContext, timeCtx);
+                ImGui::SetScrollHereY(1.0f);
             }
 
             // 2. 判定是否触发命运事件
-            if (response.trigger_event && !isEventActive) {
+            else if (response.trigger_event && !isEventActive) {
                 isGeneratingEvent = true;
                 std::string recentContext = "";
                 int startIdx = std::max(0, (int)uiChatHistory.size() - 6);
@@ -247,6 +260,34 @@ void GameManager::checkAsyncTasks() {
                 
                 // 滚动条自动到底部（一个小优化，放在后续循环也会生效）
                 ImGui::SetScrollHereY(1.0f);
+            }
+        }
+    }
+
+    // 检查时间/场景过渡是否生成完毕
+    if (isGeneratingTransition && futureTransition.valid()) {
+        if (futureTransition.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            auto transitionResult = futureTransition.get();
+            std::string transitionScene = transitionResult.first;
+            bool isTimeAdvanced = transitionResult.second;
+            
+            isGeneratingTransition = false;
+            
+            // 只有当大模型认定“时间到了下一个阶段”时，才调用原有的宏观推进逻辑
+            if (isTimeAdvanced) {
+                advanceTime(); // 这里面会处理 currentTime 的流逝逻辑
+            }
+            
+            // 重置聊天回合疲劳值
+            chatTurns = 0; 
+            
+            // 绝美过场旁白上屏
+            uiChatHistory.push_back({"【GM 场景重构】", transitionScene});
+            ImGui::SetScrollHereY(1.0f);
+            
+            // 【灵魂注入】：把新场景直接塞进 NPC 的上下文中，让她知道已经换图了
+            if (activeNPC != nullptr) {
+                activeNPC->injectSceneMemory(transitionScene);
             }
         }
     }
@@ -593,6 +634,12 @@ void GameManager::renderUI() {
                                       (currentTime == TimeOfDay::NOON) ? "午后" : "深夜";
                 std::string hiddenInput = "（系统提示：当前游戏时间是" + timeCtx + "）" + userText;
                 
+                if (chatTurns >= 5) { 
+                    hiddenInput = "（系统提示：你们在这个场景聊得有一段时间了。请寻找合适的借口自然地结束当前话题。你可以选择提议去附近的另一个地方继续约会，或者直接提出告别结束今天的见面，并务必将 ready_to_transition 设为 true）\n玩家说：" + userText;
+                } else {
+                    hiddenInput = "（系统提示：当前游戏时间是" + timeCtx + "）\n玩家说：" + userText;
+                }
+
                 futureReply = std::async(std::launch::async, [activeNPC = this->activeNPC, playerCopy = this->mainPlayer, hiddenInput]() {
                     return activeNPC->interact(hiddenInput, playerCopy);
                 });

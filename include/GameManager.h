@@ -25,6 +25,9 @@ private:
 
     int chatTurns = 0; // 聊天回合计数器，用于控制时间流逝
 
+    bool isGeneratingTransition = false;
+    std::future<std::pair<std::string, bool>> futureTransition;
+
     // ================= [核心游戏状态] =================
     Player mainPlayer;
     CharacterProfile currentNPC;

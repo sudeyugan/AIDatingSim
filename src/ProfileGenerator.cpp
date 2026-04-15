@@ -224,3 +224,35 @@ std::future<std::string> ProfileGenerator::generateEncounterAsync(const std::str
         return callLLMAPI(prompt, false);
     });
 }
+
+std::future<std::pair<std::string, bool>> ProfileGenerator::generateTransitionSceneAsync(const std::string& worldSetting, const std::string& recentContext, const std::string& currentTimeStr) {
+    return std::async(std::launch::async, [worldSetting, recentContext, currentTimeStr]() {
+        std::string actualWorld = worldSetting.empty() ? "现代日常都市" : worldSetting;
+        
+        std::string prompt = 
+            "作为Galgame剧本家，请根据以下对话上下文，生成一段场景转移的旁白（第二人称）。\n\n"
+            "【当前世界观】： " + actualWorld + "\n"
+            "【当前宏观时间】： " + currentTimeStr + "\n"
+            "【最近的对话】\n" + recentContext + "\n\n"
+            "【剧情判断与输出规则】\n"
+            "1. 请判断剧情走向：如果两人只是换个附近的地点继续相处（如从街头走到咖啡厅、从客厅走到阳台），请将 `is_time_advanced` 设为 false。如果两人明确告别、各自回家、或者暗示经过了漫长的时间，请将 `is_time_advanced` 设为 true。\n"
+            "2. 生成的 `description` 不要包含人物具体的对话，只侧重于描写环境的变化、两人行动状态的改变以及时光的流逝。字数约100字，极具画面感，自然衔接上下文。\n"
+            "3. 必须且只能输出合法的 JSON 格式：\n"
+            "{\n"
+            "  \"description\": \"旁白内容\",\n"
+            "  \"is_time_advanced\": false\n"
+            "}";
+
+        std::string response = callLLMAPI(prompt, true); // 强制开启 JSON 模式
+
+        try {
+            json j = json::parse(response);
+            std::string desc = j.value("description", "（周围的场景和氛围悄然发生了一些变化...）");
+            bool advanced = j.value("is_time_advanced", false);
+            return std::make_pair(desc, advanced);
+        } catch (...) {
+            std::cerr << "转场JSON解析失败: " << response << std::endl;
+            return std::make_pair(std::string("（时空发生了一丝涟漪...）"), false); 
+        }
+    });
+}

@@ -17,8 +17,6 @@ NPC::NPC(std::string n, std::string persona) : name(n), basePersona(persona), af
 std::string NPC::getName() const { return name; }
 
 std::string NPC::generateDynamicSystemPrompt(const Player& player) const {
-    // basePersona 里面包含了我们在 GameManager 传进来的 外貌、性格和隐藏执念
-    
     std::string prompt = 
         "【系统设定】\n"
         "你现在正在扮演一个恋爱模拟游戏中的女性角色。请完全沉浸在这个角色中，绝对不要承认自己是AI或者语言模型。\n\n"
@@ -34,12 +32,15 @@ std::string NPC::generateDynamicSystemPrompt(const Player& player) const {
         "3. 玩家的回复可能会采取具体的“【行动】”。当玩家采取行动时，你需要根据你的性格做出真实的反应。\n"
         "4. 每次回复请控制在 200 字以内，保持对话的来回节奏。\n\n"
         "【输出格式要求】\n"
-        "你必须且只能返回合法的 JSON 格式：\n"
+        "你必须且只能返回合法的纯 JSON 格式，绝不能包含任何 Markdown 标记或额外注释！格式如下：\n"
         "{\n"
         "  \"reply\": \"你说出的话，或者附带的动作描写（用括号括起来）\",\n"
-        "  \"trigger_event\": false (如果你觉得气氛到位，需要GM介入推进关系或发生突发事件，请设为 true，否则平时都是 false)\n"
-        "}";
-
+        "  \"trigger_event\": false\n"
+        "  \"ready_to_transition\": false\n"
+        "}\n"
+        "【字段说明】\n"
+        "- trigger_event: 默认为 false。如果你觉得气氛到位，需要GM介入推进关系或发生突发事件，请设为 true。"
+        "- ready_to_transition: 默认为 false。如果你觉得当前话题已经自然结束、或者到了该道别、换个地方的时候，请设为 true。";
     return prompt;
 }
 
@@ -92,15 +93,26 @@ NPCResponse NPC::interact(const std::string& playerInput, const Player& player) 
 
     int max_retries = 3;
     for (int attempt = 0; attempt < max_retries; ++attempt) {
+        // 如果是重试，动态追加一条严厉的系统提示，防止模型连续输出同样的空白
+        json currentMessages = messages; 
         if (attempt > 0) {
             std::cout << "[System] 重新尝试唤醒 " << name << " 的思绪... (第 " << attempt + 1 << " 次尝试)" << std::endl;
+            currentMessages.push_back({{"role", "system"}, {"content", "错误：你刚才输出了空内容或非法格式。请务必输出一段包含 'reply' 字段的有效 JSON 文本，不要只有空格！"}});
         } else {
             std::cout << "[System] 正在等待 " << name << " 的思考..." << std::endl;
         }
 
+        json requestBody = {
+            {"model", "deepseek-chat"},
+            {"messages", currentMessages}, // 使用可能追加了重试提示的 messages
+            {"response_format", {{"type", "json_object"}}}, 
+            {"temperature", 0.7}
+        };
+
+        std::string bodyStr = requestBody.dump();
+
         cli.set_read_timeout(30, 0); 
         auto res = cli.Post("/v1/chat/completions", headers, bodyStr, "application/json");
-
         // 3. 解析返回结果
         if (res && res->status == 200) {
             std::string aiContentStr = ""; 
@@ -126,11 +138,8 @@ NPCResponse NPC::interact(const std::string& playerInput, const Player& player) 
                 json aiResult = json::parse(aiContentStr);
                 std::string reply = aiResult.value("reply", "……（沉默）");
                 
-                if (!reply.empty()) {
-                chatHistory.push_back({{"role", "user"}, {"content", playerInput}});
-                chatHistory.push_back({{"role", "assistant"}, {"content", reply}});
-                } else {
-                return {"[系统提示] 对方陷入了长久的沉默，请试着换个话题。", false};
+                if (reply.empty()) {
+                    return {"[系统提示] 对方陷入了长久的沉默，请试着换个话题。", false};
                 }
 
                 int affectionChange = aiResult.value("affection_change", 0);
@@ -138,8 +147,18 @@ NPCResponse NPC::interact(const std::string& playerInput, const Player& player) 
 
                 // 只有成功解析，才能将本次对话存入历史记录
                 chatHistory.push_back({{"role", "user"}, {"content", playerInput}});
-                chatHistory.push_back({{"role", "assistant"}, {"content", reply}}); 
 
+                json aiMemoryJson = {
+                    {"reply", reply},
+                    {"trigger_event", triggerEvent}
+                    {"ready_to_transition", readyToTransition}
+                };
+                if (aiResult.contains("affection_change")) {
+                    aiMemoryJson["affection_change"] = affectionChange;
+                }
+                chatHistory.push_back({{"role", "assistant"}, {"content", aiMemoryJson.dump()}}); 
+
+                // 维护最大记忆长度
                 while (chatHistory.size() > MAX_HISTORY) {
                     chatHistory.pop_front();
                 }

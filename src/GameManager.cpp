@@ -237,6 +237,7 @@ void GameManager::checkAsyncTasks() {
         if (futureEncounter.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
             std::string encounterScene = futureEncounter.get();
             isGeneratingEncounter = false;
+            
             hasEncounterStarted = true;
             // 将绝美的开场白上屏，现在玩家可以开始搭话了！
             uiChatHistory.push_back({"【GM 场景导入】", encounterScene});
@@ -285,9 +286,24 @@ void GameManager::checkAsyncTasks() {
             uiChatHistory.push_back({"【GM 场景重构】", transitionScene});
             ImGui::SetScrollHereY(1.0f);
             
-            // 【灵魂注入】：把新场景直接塞进 NPC 的上下文中，让她知道已经换图了
+            // 把新场景直接塞进 NPC 的上下文中，让她知道已经换图了
             if (activeNPC != nullptr) {
                 activeNPC->injectSceneMemory(transitionScene);
+                
+                // 转场完毕后，立刻进入等待 NPC 回复的状态，不给玩家冷场的机会
+                isWaitingForReply = true; 
+                
+                std::string timeCtx = (currentTime == TimeOfDay::MORNING) ? "清晨" : 
+                                      (currentTime == TimeOfDay::NOON) ? "午后" : "深夜";
+                
+                // 构造一条专用的隐藏指令，逼迫大模型根据新场景主动开口
+                std::string hiddenInput = "（系统提示：场景与时间刚刚发生了推移，当前时间是" + timeCtx + "。请根据最新的场景旁白，自然且主动地向玩家开口，抛出一个新话题或对环境做出感叹，打破沉默。）";
+                
+                // 开启异步任务，让 NPC 思考新场景的第一句话
+                futureReply = std::async(std::launch::async, [activeNPC = this->activeNPC, playerCopy = this->mainPlayer, hiddenInput]() {
+                    return activeNPC->interact(hiddenInput, playerCopy);
+                });
+                // ====================================================================
             }
         }
     }
@@ -614,7 +630,13 @@ void GameManager::renderUI() {
     // 常规聊天模式 VS 事件选择模式
     if (isEventActive) {
         for (size_t i = 0; i < currentEvent.choices.size(); ++i) {
-                if (ImGui::Button(buttonLabel.c_str())) {
+            std::string choiceText = currentEvent.choices[i].text;
+            std::string choiceStat = currentEvent.choices[i].stat;
+            std::string displayStat = choiceStat;    
+
+            std::string buttonLabel = choiceText + " [" + displayStat + "检定]##" + std::to_string(i);
+            
+            if (ImGui::Button(buttonLabel.c_str())) {
                 
                 int playerStatValue = 50; 
                 if (choiceStat == "physique") playerStatValue = mainPlayer.getPhysique();

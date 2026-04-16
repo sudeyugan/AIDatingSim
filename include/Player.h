@@ -16,35 +16,25 @@ private:
     int luck;       // 运气 (影响概率判定)
 
 public:
-    Player() : physique(50), intellect(50), charm(50), wealth(50), empathy(50), luck(50) {}
-    Player(std::string pName) : name(pName), physique(50), intellect(50), charm(50), wealth(50), empathy(50), luck(50) {}
-
+    Player();
+    Player(std::string pName);
     // Getter 接口
-    int getPhysique() const { return physique; }
-    int getIntellect() const { return intellect; }
-    int getCharm() const { return charm; }
-    int getWealth() const { return wealth; }
-    int getEmpathy() const { return empathy; }
-    int getLuck() const { return luck; }
+    int getPhysique() const;
+    int getIntellect() const;
+    int getCharm() const;
+    int getWealth() const;
+    int getEmpathy() const;
+    int getLuck() const;
 
-    void setAttributes(int p, int i, int c, int w, int e, int l) {
-        physique = p; intellect = i; charm = c; wealth = w; empathy = e; luck = l;
-    }
-
-    nlohmann::json toJson() const {
-        return {
-            {"name", name}, {"backstory", backstory},
-            {"physique", physique}, {"intellect", intellect}, {"charm", charm},
-            {"wealth", wealth}, {"empathy", empathy}, {"luck", luck}
-        };
-    }
-    void fromJson(const nlohmann::json& j);
-    
-    // Getters
     std::string getName() const;
     std::string getBackstory() const; 
 
-    // Setters / Modifiers
+    // Setter
+    void setAttributes(int p, int i, int c, int w, int e, int l);
     void setBackstory(const std::string& story); 
     void updateStats(int dCharm, int dInt, int dWealth);
+
+    // JSON 序列化
+    nlohmann::json toJson() const;
+    void fromJson(const nlohmann::json& j);
 };

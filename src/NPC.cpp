@@ -35,17 +35,24 @@ std::string NPC::generateDynamicSystemPrompt(const Player& player) const {
         "当前玩家属性：共情=" + std::to_string(player.getEmpathy()) + "，智识=" + std::to_string(player.getIntellect()) + "。\n"
         "如果玩家的某项属性 >= 70，他就能察觉到普通人注意不到的隐藏细节。\n"
         "请务必判断当前情境，如果触发了感知，请将这些【隐藏信息】（如你极力掩饰的微表情、场景中暗藏的线索）放在 'passive_insights' 数组中返回；如果没有触发，请返回空数组。\n\n"
+        "【好感度动态判定】\n"
+        "你需要根据玩家的发言和行动，判断是否对你的好感度产生了影响：\n"
+        "- 如果玩家的话语让你开心、心动、觉得有趣或觉得被尊重，好感度增加 (+1 到 +5)\n"
+        "- 如果玩家的话语让你反感、觉得无聊、冒犯或不适，好感度降低 (-1 到 -5)\n"
+        "- 如果只是平淡的日常对话，则为 0\n\n"
         "【输出格式要求】\n"
         "你必须且只能返回合法的纯 JSON 格式，绝不能包含任何 Markdown 标记或额外注释！格式如下：\n"
         "{\n"
         "  \"reply\": \"你说出的话，或者附带的动作描写（用括号括起来）\",\n"
-        "  \"trigger_event\": false\n"
-        "  \"ready_to_transition\": false\n"
+        "  \"trigger_event\": false,\n"
+        "  \"ready_to_transition\": false,\n"
+        "  \"affection_change\": 0,\n"
         "  \"passive_insights\": [\"(共情检定成功) 你敏锐地察觉到她握紧了衣角，似乎在紧张。\"] \n"
         "}\n"
         "【字段说明】\n"
         "- trigger_event: 默认为 false。如果你觉得气氛到位，需要GM介入推进关系或发生突发事件，请设为 true。"
         "- ready_to_transition: 默认为 false。如果你觉得当前话题已经自然结束、或者到了该道别、换个地方的时候，请设为 true。";
+        "- affection_change: 好感度变化值，严格限制在 -5 到 +5 之间。";
     return prompt;
 }
 
@@ -144,7 +151,7 @@ NPCResponse NPC::interact(const std::string& playerInput, const Player& player) 
                 std::string reply = aiResult.value("reply", "……（沉默）");
                 
                 if (reply.empty()) {
-                    return {"[系统提示] 对方陷入了长久的沉默，请试着换个话题。", false};
+                    return {"[系统提示] 对方陷入了长久的沉默，请试着换个话题。", false, false, 0, {}};
                 }
 
                 int affectionChange = aiResult.value("affection_change", 0);
@@ -164,45 +171,39 @@ NPCResponse NPC::interact(const std::string& playerInput, const Player& player) 
                 json aiMemoryJson = {
                     {"reply", reply},
                     {"trigger_event", triggerEvent},
-                    {"ready_to_transition", readyToTransition}
+                    {"ready_to_transition", readyToTransition},
+                    {"affection_change", affectionChange}
                 };
-                if (aiResult.contains("affection_change")) {
-                    aiMemoryJson["affection_change"] = affectionChange;
-                }
                 chatHistory.push_back({{"role", "assistant"}, {"content", aiMemoryJson.dump()}}); 
 
-                // 维护最大记忆长度
                 while (chatHistory.size() > MAX_HISTORY) {
                     chatHistory.pop_front();
                 }
 
+                // 修改实际的好感度并打印日志
                 if (affectionChange != 0) {
                     changeAffection(affectionChange);
                 }
 
-                // 【成功返回，跳出循环】
-                return {reply, triggerEvent};
+                // 将解析出来的所有变量打包并返回
+                return {reply, triggerEvent, readyToTransition, affectionChange, insights};
 
             } catch (const std::exception& e) {
                 std::cerr << "[Debug] 第 " << attempt + 1 << " 次解析失败: " << e.what() << std::endl;
-                // 如果是最后一次尝试依然失败，则跳出并报错给玩家
                 if (attempt == max_retries - 1) {
-                    std::cerr << "[Debug] 最终失败，API 原始 Body 数据: \n" << res->body << std::endl;
-                    return {"[Error] 角色思绪有些混乱(多次重试均失败) 请再试一次", false};
+                    return {"[Error] 角色思绪有些混乱(多次重试均失败) 请再试一次", false, false, 0, {}};
                 }
             }
         } else {
-            // 网络通信层面的失败
             std::cerr << "[Debug] 第 " << attempt + 1 << " 次请求网络失败。" << std::endl;
             if (attempt == max_retries - 1) {
                 std::string errorMsg = res ? std::to_string(res->status) : "网络连接失败/超时";
                 if(res && res->status != 200) errorMsg += " - Body: " + res->body; 
-                return {"[Error] AI 通信超时: " + errorMsg, false};
+                return {"[Error] AI 通信超时: " + errorMsg, false, false, 0, {}};
             }
         }
-    } // 结束循环
-    
-    return {"[Error] 未知错误", false};
+    } 
+    return {"[Error] 未知错误", false, false, 0, {}};
 }
 
 void NPC::generatePortraitAPI() const {
@@ -231,7 +232,7 @@ std::future<bool> NPC::generatePortraitAsync() {
         apiKey.erase(apiKey.find_last_not_of(" ") + 1);
 
         // 构造生图提示词
-        std::string prompt = "京都动画风格的二次元角色半身立绘，极其精细的唯美光影，画风温馨治愈，高质量视觉小说CG，人物衣着得体日常。京都动画风格的二次元角色半身立绘，高质量视觉小说CG，人物衣着得体日常。" + appearanceDesc;
+        std::string prompt = "高质量视觉小说CG，半身立绘。精美的日韩融合厚涂画风（乙女游戏/青年向漫画风格）。角色设定为青春美丽的【女高中生/女大学生】，但必须具备成年女性/接近成年的修长体态。强制要求：写实头身比（7-8头身），五官精致大方（避免幼态大圆眼，眼型适中或狭长），气质清爽优雅，面部轮廓清晰。现代校园或休闲日常穿搭。" + appearanceDesc;
 
         json requestBody = {
             {"model", "cogview-4-250304"}, // 目前智谱最新的高质量生图模型

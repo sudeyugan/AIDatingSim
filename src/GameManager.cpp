@@ -328,7 +328,99 @@ void GameManager::checkAsyncTasks() {
     }
 }
 
+void GameManager::drawChatBubble(const std::string& name, const std::string& text, int type) {
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    float avail_width = ImGui::GetContentRegionAvail().x;
+    float wrap_width = avail_width * 0.55f; // 限制气泡最大宽度
+    
+    ImVec2 text_size = ImGui::CalcTextSize(text.c_str(), NULL, true, wrap_width);
+    ImVec2 padding(16, 14); // 稍微增加一点内边距，让文字呼吸感更强
+    ImVec2 bubble_size(text_size.x + padding.x * 2, text_size.y + padding.y * 2);
+    
+    float avatar_size = 44.0f;
+    float item_spacing = 12.0f;
+    
+    // --- 居中系统提示文本优化 ---
+    if (type == 0 || type == 3) { 
+        ImGui::SetCursorPosX((avail_width - text_size.x) * 0.5f);
+        // 给系统文字加一个极其微弱的半透明圆角底色，看起来像微信的系统提示
+        ImVec2 sys_pos = ImGui::GetCursorScreenPos();
+        draw_list->AddRectFilled(ImVec2(sys_pos.x - 10, sys_pos.y - 4), 
+                                 ImVec2(sys_pos.x + text_size.x + 10, sys_pos.y + text_size.y + 4), 
+                                 IM_COL32(0, 0, 0, 20), 12.0f);
+                                 
+        ImGui::PushStyleColor(ImGuiCol_Text, type == 3 ? ImVec4(0.6f, 0.4f, 0.8f, 1.0f) : ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+        ImGui::TextWrapped("%s", text.c_str());
+        ImGui::PopStyleColor();
+        ImGui::Spacing(); ImGui::Spacing();
+        return;
+    }
 
+    ImVec2 cursor_pos = ImGui::GetCursorScreenPos();
+    float line_height = std::max(bubble_size.y, avatar_size) + item_spacing * 2;
+    std::string initial = name.length() > 0 ? name.substr(0, std::min<size_t>(3, name.length())) : "?";
+    ImVec2 char_size = ImGui::CalcTextSize(initial.c_str());
+
+    // 阴影配置
+    ImVec2 shadow_offset(0.0f, 4.0f); // 向下偏移
+    ImU32 shadow_color = IM_COL32(0, 0, 0, 25); // 非常淡的黑影
+
+    if (type == 1) { // ========== 玩家（靠右，绿色系） ==========
+        float start_x = cursor_pos.x + avail_width - bubble_size.x - avatar_size - item_spacing * 2;
+        ImVec2 bubble_pos = ImVec2(start_x, cursor_pos.y);
+        
+        // 1. 画气泡阴影
+        draw_list->AddRectFilled(ImVec2(bubble_pos.x + shadow_offset.x, bubble_pos.y + shadow_offset.y), 
+                                 ImVec2(bubble_pos.x + bubble_size.x + shadow_offset.x, bubble_pos.y + bubble_size.y + shadow_offset.y), 
+                                 shadow_color, 12.0f);
+        // 2. 画气泡本体 (现代化的微渐变感，这里用实色替代)
+        ImU32 bg_color = IM_COL32(165, 245, 120, 240); // 稍微亮一点的苹果绿
+        draw_list->AddRectFilled(bubble_pos, ImVec2(bubble_pos.x + bubble_size.x, bubble_pos.y + bubble_size.y), bg_color, 12.0f); 
+        // 3. 气泡微小描边 (增加精致感)
+        draw_list->AddRect(bubble_pos, ImVec2(bubble_pos.x + bubble_size.x, bubble_pos.y + bubble_size.y), IM_COL32(140, 220, 100, 200), 12.0f, 0, 1.0f);
+
+        // 文字
+        ImGui::SetCursorScreenPos(ImVec2(bubble_pos.x + padding.x, bubble_pos.y + padding.y));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.15f, 0.25f, 0.15f, 1.0f)); // 深绿色文字比纯黑更护眼
+        ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + wrap_width);
+        ImGui::TextUnformatted(text.c_str());
+        ImGui::PopTextWrapPos(); ImGui::PopStyleColor();
+        
+        // 玩家头像阴影与本体
+        ImVec2 avatar_pos = ImVec2(bubble_pos.x + bubble_size.x + item_spacing, cursor_pos.y);
+        draw_list->AddRectFilled(ImVec2(avatar_pos.x, avatar_pos.y + 3), ImVec2(avatar_pos.x + avatar_size, avatar_pos.y + avatar_size + 3), shadow_color, 8.0f);
+        draw_list->AddRectFilled(avatar_pos, ImVec2(avatar_pos.x + avatar_size, avatar_pos.y + avatar_size), IM_COL32(120, 170, 255, 255), 8.0f);
+        draw_list->AddText(ImVec2(avatar_pos.x + (avatar_size - char_size.x)*0.5f, avatar_pos.y + (avatar_size - char_size.y)*0.5f), IM_COL32(255,255,255,255), initial.c_str());
+        draw_list->AddRect(avatar_pos, ImVec2(avatar_pos.x + avatar_size, avatar_pos.y + avatar_size), IM_COL32(255,255,255,100), 8.0f, 0, 1.5f); // 头像高光边
+        
+    } else { // ========== NPC（靠左，白粉系） ==========
+        float start_x = cursor_pos.x + item_spacing;
+        
+        // 头像部分
+        ImVec2 avatar_pos = ImVec2(start_x, cursor_pos.y);
+        draw_list->AddRectFilled(ImVec2(avatar_pos.x, avatar_pos.y + 3), ImVec2(avatar_pos.x + avatar_size, avatar_pos.y + avatar_size + 3), shadow_color, 8.0f);
+        draw_list->AddRectFilled(avatar_pos, ImVec2(avatar_pos.x + avatar_size, avatar_pos.y + avatar_size), IM_COL32(255, 170, 190, 255), 8.0f);
+        draw_list->AddText(ImVec2(avatar_pos.x + (avatar_size - char_size.x)*0.5f, avatar_pos.y + (avatar_size - char_size.y)*0.5f), IM_COL32(255,255,255,255), initial.c_str());
+        draw_list->AddRect(avatar_pos, ImVec2(avatar_pos.x + avatar_size, avatar_pos.y + avatar_size), IM_COL32(255,255,255,100), 8.0f, 0, 1.5f);
+
+        // 气泡部分
+        ImVec2 bubble_pos = ImVec2(avatar_pos.x + avatar_size + item_spacing, cursor_pos.y);
+        draw_list->AddRectFilled(ImVec2(bubble_pos.x + shadow_offset.x, bubble_pos.y + shadow_offset.y), 
+                                 ImVec2(bubble_pos.x + bubble_size.x + shadow_offset.x, bubble_pos.y + bubble_size.y + shadow_offset.y), 
+                                 shadow_color, 12.0f);
+        draw_list->AddRectFilled(bubble_pos, ImVec2(bubble_pos.x + bubble_size.x, bubble_pos.y + bubble_size.y), IM_COL32(255, 255, 255, 245), 12.0f); 
+        // 给NPC白色气泡加一层非常淡的灰色描边，防止在白背景中隐形
+        draw_list->AddRect(bubble_pos, ImVec2(bubble_pos.x + bubble_size.x, bubble_pos.y + bubble_size.y), IM_COL32(230, 230, 235, 255), 12.0f, 0, 1.0f);
+        
+        ImGui::SetCursorScreenPos(ImVec2(bubble_pos.x + padding.x, bubble_pos.y + padding.y));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 0.2f, 0.22f, 1.0f));
+        ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + wrap_width);
+        ImGui::TextUnformatted(text.c_str());
+        ImGui::PopTextWrapPos(); ImGui::PopStyleColor();
+    }
+    
+    ImGui::SetCursorScreenPos(ImVec2(cursor_pos.x, cursor_pos.y + line_height));
+}
 
 void GameManager::renderUI() {
     // 设定全屏无边框主窗口

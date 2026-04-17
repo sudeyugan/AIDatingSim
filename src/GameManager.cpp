@@ -420,6 +420,7 @@ void GameManager::drawChatBubble(const std::string& name, const std::string& tex
     }
     
     ImGui::SetCursorScreenPos(ImVec2(cursor_pos.x, cursor_pos.y + line_height));
+    ImGui::Dummy(ImVec2(0.0f, 0.0f)); 
 }
 
 void GameManager::renderUI() {
@@ -491,30 +492,16 @@ void GameManager::renderUI() {
         ImGui::Spacing();
         
         for (const auto& chat : uiChatHistory) {
-            ImVec4 textColor;
-            bool isInsight = false;
-
-            // 保留原有的颜色分配逻辑
-            if (chat.first == "[暗中洞察]") {
-                textColor = ImVec4(0.8f, 0.6f, 1.0f, 1.0f);
-                isInsight = true;
-            } else if (chat.first == "系统" || chat.first == "【GM 场景导入】" || chat.first == "【GM 突发事件】" || chat.first == "【GM 场景重构】") {
-                textColor = ImVec4(0.4f, 0.4f, 0.4f, 1.0f);
-            } else if (chat.first == mainPlayer.getName()) {
-                textColor = ImVec4(0.3f, 0.5f, 0.8f, 1.0f); 
-            } else {
-                textColor = ImVec4(0.9f, 0.4f, 0.5f, 1.0f); 
+            int type = 0;
+            if (chat.first == mainPlayer.getName()) {
+                type = 1; // 玩家
+            } else if (chat.first == "[暗中洞察]") {
+                type = 3; // 洞察
+            } else if (chat.first != "系统" && chat.first.find("GM") == std::string::npos) {
+                type = 2; // NPC
             }
             
-            // 渲染文本
-            ImGui::PushStyleColor(ImGuiCol_Text, textColor);
-            if (isInsight) {
-                ImGui::TextWrapped("%s %s", chat.first.c_str(), chat.second.c_str());
-            } else {
-                ImGui::TextWrapped("%s: %s", chat.first.c_str(), chat.second.c_str());
-            }
-            ImGui::PopStyleColor();
-            ImGui::Spacing();
+            drawChatBubble(chat.first, chat.second, type);
         }
 
         if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) ImGui::SetScrollHereY(1.0f);

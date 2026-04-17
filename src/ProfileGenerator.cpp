@@ -22,7 +22,7 @@ static std::string callLLMAPI(const std::string& prompt, bool jsonMode = false) 
     json reqBody = {
         {"model", "deepseek-chat"},
         {"messages", json::array({{{"role", "user"}, {"content", prompt}}})},
-        {"temperature", 0.7}
+        {"temperature", 0.9}
     };
     
     // 强制 JSON 输出模式（如果是支持的 API）
@@ -51,9 +51,22 @@ std::future<CharacterProfile> ProfileGenerator::generateRandomProfileAsync(const
         // 【核心锚点】：如果玩家不填，默认就是普通高中
         std::string actualWorld = worldSetting.empty() ? "现代日常都市，普通的高中校园" : worldSetting;
 
+        std::vector<std::string> styles = {
+            "元气运动风，如宽松卫衣和短裤，短发",
+            "安静文学少女风，如长裙和针织衫，戴眼镜",
+            "酷飒不良风，改造过的制服，挑染头发",
+            "温婉学姐风，修长成熟，穿搭大方",
+            "地雷系或量产型穿搭，略带一点病娇感"
+        };
+
+        std::mt19937 gen(std::chrono::system_clock::now().time_since_epoch().count());
+        int styleIdx = std::uniform_int_distribution<>(0, styles.size() - 1)(gen);
+        std::string randomStyle = styles[styleIdx];
+
         std::string prompt = 
             "【角色设定】\n"
             "你是一位顶级的 Galgame（恋爱模拟游戏）剧本家，擅长塑造细腻、真实、有反差感的女性角色。\n\n"
+            "【生成随机熵】： " + getEntropySeed() + "（请利用此随机数确保本次生成的角色与以往不同，最大化多样性）\n\n"
             "【当前世界观设定】\n" + actualWorld + "\n\n"
             "【核心生成规则】\n"
             "1. 如果【当前世界观设定】为“现代日常都市”、“普通高中”或为空，你必须严格遵循以下限制：\n"
@@ -61,7 +74,7 @@ std::future<CharacterProfile> ProfileGenerator::generateRandomProfileAsync(const
             "   - 角色身份限制：她必须是一个的高中生（例如：班委、社团成员、隔壁班同学、图书管理员等）。\n"
             "   - 风格：日常、青春、治愈或带着青春期的烦恼（如升学压力、人际关系、暗恋等）,也有一定概率包含不为人知的心理创伤。\n"
             "2. 如果【当前世界观设定】明确指定了其他背景，请忽略第1条，并严格贴合指定的世界观生成角色。\n\n"
-            "3. 【外貌生成绝对限制】：即使角色是学生，外貌描写（appearance）也必须展现出“修长、成熟、清秀”的青年气质。请多描写大方的校园穿搭（如：修身衬衫、针织开衫、百褶裙配小马甲、风衣、帆布包）、自然披肩的发型或高马尾，以及清秀立体的五官。绝对禁止使用“娇小”、“可爱”、“婴儿肥”、“大眼睛”、“萝莉”、“双马尾”等任何带有幼态色彩的词汇！\n\n"
+            "3. 【外貌生成建议】：请重点参考这种风格进行描写——【" + randomStyle + "】。请发挥想象力，保证发型、发色等风格的多样性。拒绝幼态。\n\n"
             "【输出要求】\n"
             "必须且只能输出合法的 JSON 格式，字段如下：\n"
             "{\n"
@@ -98,6 +111,7 @@ std::future<std::pair<std::string, std::string>> ProfileGenerator::generatePlaye
         std::string prompt = 
             "【设定说明】\n"
             "作为Galgame策划，请根据当前世界观：【" + actualWorld + "】，生成玩家的主角设定。\n\n"
+            "【生成随机熵】： " + getEntropySeed() + "（请利用此随机数确保本次生成的角色与以往不同，最大化多样性）\n\n"
             "【核心约束】\n"
             "1. 如果世界观是“现代/普通高中”或为空，主角必须是一个男高中生。背景应当贴近日常（例如：刚搬家过来的转校生、青梅竹马的邻居等）。\n"
             "2. 绝对禁止“龙傲天”、“兵王回归”、“隐藏富二代”等夸张爽文设定。\n"
@@ -123,6 +137,7 @@ std::future<std::string> ProfileGenerator::generateRandomWorldSettingAsync() {
     return std::async(std::launch::async, []() {
         std::string prompt = 
             "你是一位顶级的世界观架构师和Galgame文案策划。请随机生成一个极具沉浸感和代入感的【游戏世界观设定】。\n\n"
+            "【生成随机熵】： " + getEntropySeed() + "（请利用此随机数确保本次生成的世界与以往不同，最大化多样性）\n\n"
             "【概率分布要求】\n"
             "1. 【70%的概率】为现代日常/青春校园（如：海滨小镇的公立高中、注重升学率的严格私立高中、充满艺术气息的美术附中、偏远乡村的唯一中学等等）。\n"
             "2. 【30%的概率】为特殊设定（如：赛博朋克都市的底层街区、剑与魔法的和平小镇、末日后的一座废土庇护所等等）。\n\n"

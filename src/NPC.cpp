@@ -223,7 +223,7 @@ std::future<bool> NPC::generatePortraitAsync() {
     
     return std::async(std::launch::async, [appearanceDesc, this]() {
         // ==========================================
-        // 1. 请求生图 API (以标准 OpenAI DALL-E 为例)
+        // 1. 请求生图 API 
         // ==========================================
         std::string apiKey = ConfigManager::getInstance().getImageApiKey();
         
@@ -232,7 +232,7 @@ std::future<bool> NPC::generatePortraitAsync() {
         apiKey.erase(apiKey.find_last_not_of(" ") + 1);
 
         // 构造生图提示词
-        std::string prompt = "高质量视觉小说CG，半身立绘。精美的日韩融合厚涂画风（乙女游戏/青年向漫画风格）。角色设定为青春美丽的【女高中生/女大学生】，但必须具备成年女性/接近成年的修长体态。强制要求：写实头身比（7-8头身），五官精致大方（避免幼态大圆眼，眼型适中或狭长），气质清爽优雅，面部轮廓清晰。现代校园或休闲日常穿搭。" + appearanceDesc;
+        std::string prompt = "高质量动画截图，日系流行动漫番剧风格（Anime style）。高质量平涂与微光效结合，精细的描线。强烈的镜头感与氛围光影（Cinematic lighting, bloom effect）。半身立绘。角色为气质清爽大方的女学生，身姿修长，面部刻画细腻自然（避免夸张的萌系大眼），具有青年向漫画的成熟唯美感。" + appearanceDesc;
 
         json requestBody = {
             {"model", "cogview-4-250304"}, // 目前智谱最新的高质量生图模型

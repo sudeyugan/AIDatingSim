@@ -95,9 +95,9 @@ void GameManager::startNewGame() {
     std::cout << "[系统] 正在清理世界线，准备开启全新游戏..." << std::endl;
 
     // 1. 清空聊天记录，写入初始新手引导
-    uiChatHistory.clear();
+uiChatHistory.clear();
     uiChatHistory.push_back({"系统", "欢迎来到跨次元恋爱模拟系统 v2.0。"});
-    uiChatHistory.push_back({"系统", "当前世界一片空白。请在左侧设定世界观，并点击下方的【邂逅新角色】开始你的故事。"});
+    uiChatHistory.push_back({"系统", "请前往【档案】页面设定世界观，并邂逅新角色。"});
     
     // 2. 恢复默认世界观
     strcpy(worldSettingBuf, "现代日常都市");
@@ -119,6 +119,7 @@ void GameManager::startNewGame() {
     isGeneratingNPC = false;
     isWaitingForReply = false;
     isEventActive = false;
+    currentTab = UINavTab::PROFILE;
 }
 
 void GameManager::checkAsyncTasks() {
@@ -215,6 +216,16 @@ void GameManager::checkAsyncTasks() {
         }
     }
 
+    if (isGeneratingBg && futureBg.valid()) {
+        if (futureBg.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            std::string bgPath = futureBg.get();
+            isGeneratingBg = false;
+            if (!bgPath.empty()) {
+                chatBgLoader.LoadFromFile(bgPath);
+            }
+        }
+    }
+
     // 检查玩家“重置人生”是否完成
     if (isGeneratingPlayer && futurePlayerProfile.valid()) {
         if (futurePlayerProfile.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
@@ -245,6 +256,7 @@ void GameManager::checkAsyncTasks() {
             if (activeNPC != nullptr) {
                 activeNPC->injectSceneMemory(encounterScene);
             }
+            currentTab = UINavTab::CHAT;
         }
     }
 
@@ -303,129 +315,23 @@ void GameManager::checkAsyncTasks() {
                 futureReply = std::async(std::launch::async, [activeNPC = this->activeNPC, playerCopy = this->mainPlayer, hiddenInput]() {
                     return activeNPC->interact(hiddenInput, playerCopy);
                 });
+
+                isGeneratingBg = true;
+                futureBg = std::async(std::launch::async, [transitionScene]() {
+                    // TODO: 在这里调用你的 AI 绘画 API，传入 transitionScene 作为 Prompt
+                    // 比如: return ProfileGenerator::generateBackgroundAsync(transitionScene);
+                    return std::string(""); 
+                });
                 // ====================================================================
             }
         }
     }
 }
 
+
+
 void GameManager::renderUI() {
-    if (ImGui::BeginMainMenuBar()) {
-        if (ImGui::BeginMenu("系统 (System)")) {
-            if (ImGui::MenuItem("开启全新命运 (New Game)")) {
-                startNewGame();
-            }
-            if (ImGui::MenuItem("读取命运线 (Load Game)")) {
-                showLoadMenu = true;
-                scanSaveFiles(); // 每次打开时刷新本地存档列表
-            }
-            ImGui::EndMenu();
-        }
-        ImGui::EndMainMenuBar();
-    }
-
-    // 2. 现代化的独立记忆面板
-    if (showLoadMenu) {
-        // 让窗口更大一点，比例更协调
-        ImGui::SetNextWindowSize(ImVec2(500, 480), ImGuiCond_FirstUseEver);
-        ImGuiViewport* viewport = ImGui::GetMainViewport();
-        ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f - 250, 
-                                       viewport->WorkPos.y + viewport->WorkSize.y * 0.5f - 240), 
-                                ImGuiCond_FirstUseEver);
-
-        if (ImGui::Begin("读取命运线 (Load Game)", &showLoadMenu, ImGuiWindowFlags_NoCollapse)) {
-            ImGui::TextColored(ImVec4(0.6f, 0.5f, 0.6f, 1.0f), "—— 沉睡在时间缝隙中的记忆碎片 ——");
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            if (parsedSaves.empty()) {
-                ImGui::SetCursorPosY(ImGui::GetWindowHeight() / 2.0f);
-                ImGui::TextDisabled("当前世界线一片空白，没有任何命运的记录。");
-            } else {
-                // 开启一个支持滑动的内部区域
-                ImGui::BeginChild("SaveCardsRegion", ImVec2(0, 0), false, ImGuiWindowFlags_None);
-                
-                for (int i = 0; i < parsedSaves.size(); ++i) {
-                    const auto& save = parsedSaves[i];
-                    
-                    ImGui::PushID(i); // 极其重要，防止按钮冲突
-                    
-                    // 【卡片底板样式】：纯白底色 + 大圆角边框
-                    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(1.0f, 1.0f, 1.0f, 0.9f));
-                    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
-                    ImGui::BeginChild("Card", ImVec2(0, 85), true, ImGuiWindowFlags_NoScrollbar);
-
-                    // ============ 卡片内部排版 ============
-                    // 第一行：角色名与时间
-                    ImGui::SetCursorPos(ImVec2(15, 15));
-                    ImGui::TextColored(ImVec4(0.85f, 0.45f, 0.55f, 1.0f), "邂逅对象: %s", save.npcName.c_str());
-                    ImGui::SameLine(220); // 固定列宽，保证对齐
-                    ImGui::TextDisabled("时间: %s", save.timeStr.c_str());
-
-                    // 第二行：羁绊进度条
-                    ImGui::SetCursorPos(ImVec2(15, 45));
-                    ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1.0f), "羁绊值:");
-                    ImGui::SameLine(75);
-                    
-                    // 画一个粉红色的进度条
-                    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.96f, 0.64f, 0.69f, 1.0f)); 
-                    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.9f, 0.9f, 0.9f, 1.0f)); // 进度条底色
-                    float progress = save.affection / 100.0f; // 转换为 0.0 ~ 1.0 的比例
-                    ImGui::ProgressBar(progress, ImVec2(160, 16), std::to_string(save.affection).c_str());
-                    ImGui::PopStyleColor(2);
-
-                    // 右侧绝对定位：唤醒、删除按钮
-                    ImGui::SetCursorPos(ImVec2(ImGui::GetWindowWidth() - 170, 25)); // 往左调一点以便放两个按钮
-                    
-                    // 【唤醒记忆 按钮】
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.85f, 0.9f, 1.0f));
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
-                    if (ImGui::Button("唤醒记忆", ImVec2(80, 35))) {
-                        if (loadGame("saves/" + save.fileName)) {
-                            uiChatHistory.push_back({"系统", "（时空震荡，已成功回溯至 " + save.npcName + " 的时间线）"});
-                            showLoadMenu = false; 
-                        }
-                    }
-                    ImGui::PopStyleColor(2);
-
-                    ImGui::SameLine();
-
-                    // 【抹除（删除） 按钮】
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.9f, 0.4f, 0.4f, 0.8f)); // 偏红的危险色
-                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
-                    if (ImGui::Button("抹除", ImVec2(60, 35))) {
-                        try {
-                            std::filesystem::remove("saves/" + save.fileName); // 删除物理文件
-                            scanSaveFiles(); // 立刻刷新后端的 vector
-                            
-                            // 【极为重要】：因为 scanSaveFiles() 改变了 parsedSaves 的大小，
-                            // 必须立刻 Pop 掉所有样式并跳出当前这一帧的 for 循环，否则程序会崩溃！
-                            ImGui::PopStyleColor(3);
-                            ImGui::EndChild();
-                            ImGui::PopStyleVar();
-                            ImGui::PopStyleColor();
-                            ImGui::PopID();
-                            break; 
-                        } catch (const std::exception& e) {
-                            std::cerr << "删除存档失败: " << e.what() << '\n';
-                        }
-                    }
-                    ImGui::PopStyleColor(3);
-                    // ======================================
-
-                    ImGui::EndChild();
-                    ImGui::PopStyleVar();
-                    ImGui::PopStyleColor();
-                    ImGui::PopID();
-                    ImGui::Spacing(); // 卡片之间的垂直间距
-                }
-                ImGui::EndChild();
-            }
-        }
-        ImGui::End();
-    }
-    // 设定全屏窗口
+    // 设定全屏无边框主窗口
     ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
     ImGui::SetNextWindowSize(viewport->WorkSize);
@@ -433,297 +339,375 @@ void GameManager::renderUI() {
     
     ImGui::Begin("MainGameWindow", nullptr, window_flags);
 
-    // 动态计算上下比例：上半部(立绘+状态)占 40%，下半部(聊天+交互)占 60%
-    float total_avail_y = ImGui::GetContentRegionAvail().y;
-    float top_height = total_avail_y * 0.4f;
-
-    // ====================================================
-    // 区域 A & B：上半部分 (左侧立绘 35% + 右侧情报 65%)
-    // ====================================================
-    ImGui::BeginChild("TopArea", ImVec2(0, top_height), false);
-
-    float left_width = ImGui::GetContentRegionAvail().x * 0.35f; 
-    ImGui::BeginChild("PortraitArea", ImVec2(left_width, 0), true);
-
-    if (isGeneratingPortrait) {
-        ImGui::SetCursorPosY(ImGui::GetWindowHeight() / 2.0f);
-        ImGui::TextDisabled("... AI 画师正在描绘 %s ...", currentNPC.name.c_str());
-    } 
-    else if (npcImageLoader.isLoaded()) {
-        ImVec2 availSize = ImGui::GetContentRegionAvail();
-        float aspect = (float)npcImageLoader.getWidth() / (float)npcImageLoader.getHeight();
-        ImVec2 imageSize;
-        if (availSize.x / aspect <= availSize.y) {
-            imageSize = ImVec2(availSize.x, availSize.x / aspect);
-        } else {
-            imageSize = ImVec2(availSize.y * aspect, availSize.y);
-        }
-        float offsetX = (availSize.x - imageSize.x) * 0.5f;
-        float offsetY = (availSize.y - imageSize.y) * 0.5f;
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offsetX);
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + offsetY);
-        ImGui::Image((void*)(intptr_t)npcImageLoader.getTextureID(), imageSize);
-    } 
-    else {
-        ImGui::Text("暂无立绘数据");
-    }
-    ImGui::EndChild(); // 结束立绘区
-
-    ImGui::SameLine(); 
-
-    // 右侧情报区占据剩余宽度
-    ImGui::BeginChild("InfoArea", ImVec2(0, 0), true);
-
-    std::string timeStr = (currentTime == TimeOfDay::MORNING) ? "清晨" : 
-                      (currentTime == TimeOfDay::NOON) ? "午后" : "深夜";
-
-    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "【当前阶段】: %s", timeStr.c_str());
-    ImGui::SameLine();
-    ImGui::TextDisabled("(距离下个时段: %d 回合)", 5 - chatTurns);
-    ImGui::Separator();
+    // ================= 左侧导航栏 =================
+    float nav_width = 160.0f;
+    ImGui::BeginChild("NavBar", ImVec2(nav_width, 0), true);
     
-    ImGui::TextColored(ImVec4(0.8f, 0.6f, 0.8f, 1.0f), "【当前世界观】");
-    ImGui::InputTextMultiline("##WorldSetting", worldSettingBuf, IM_ARRAYSIZE(worldSettingBuf), 
-    ImVec2(ImGui::GetContentRegionAvail().x - 100, ImGui::GetTextLineHeight() * 3)); // 稍微改矮一点
-    ImGui::SameLine();
-    
-    if (isGeneratingWorld) {
-        ImGui::BeginDisabled(); ImGui::Button("构思中...", ImVec2(80, 0)); ImGui::EndDisabled();
-    } else {
-        if (ImGui::Button("随机天意", ImVec2(80, 0))) {
-            isGeneratingWorld = true;
-            futureWorldSetting = ProfileGenerator::generateRandomWorldSettingAsync();
-        }
-    }
-    ImGui::Separator();
-
-    ImGui::TextColored(ImVec4(0.3f, 0.7f, 0.9f, 1.0f), "--- 【%s】 的状态 ---", mainPlayer.getName().c_str());
-    if (isGeneratingPlayer) {
-        ImGui::Text("正在重塑灵魂...");
-    } else {
-        ImGui::TextWrapped("【身世】: %s", mainPlayer.getBackstory().c_str());
-    }
-    ImGui::Separator();
-    
-    ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.6f, 1.0f), "--- 邂逅的角色 ---");
-    if (isGeneratingNPC) {
-        ImGui::Text("正在呼唤跨越次元的灵魂，请稍候...");
-    } else if (currentNPC.is_generated) {
-        ImGui::Text("姓名: %s  |  初始好感: %d (%s)", currentNPC.name.c_str(), currentNPC.initial_affection, currentNPC.initial_attitude.c_str());
-        ImGui::TextWrapped("【外貌】: %s", currentNPC.appearance.c_str());
-        ImGui::TextWrapped("【性格】: %s", currentNPC.personality_core.c_str());
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.5f, 0.5f, 1.0f));
-        ImGui::TextWrapped("【执念/秘密】: %s", currentNPC.hidden_trauma.c_str());
-        ImGui::PopStyleColor();
-    } else {
-        ImGui::Text("暂无角色。请点击下方按钮邂逅新的缘分。");
-    }
-    ImGui::EndChild(); // 结束情报区
-
-    ImGui::EndChild(); // 结束上半部分 TopArea
-
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 10.0f);
+    ImGui::TextColored(ImVec4(0.96f, 0.54f, 0.60f, 1.0f), "  Dating Sim v2.0");
     ImGui::Spacing();
     ImGui::Separator();
+    ImGui::Spacing();
 
-    // ====================================================
-    // 区域 C & D：下半部分 (全宽对话记录 + 底部按钮交互)
-    // ====================================================
-    
-    // 提前计算底部交互区需要的高度
-    float bottom_action_height = ImGui::GetFrameHeightWithSpacing() * 3.0f;
-    float chat_history_height = ImGui::GetContentRegionAvail().y - bottom_action_height - 10.0f;
+    ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, ImVec2(0.1f, 0.5f));
+    if (ImGui::Selectable("聊天 (Chat)", currentTab == UINavTab::CHAT, 0, ImVec2(0, 45))) currentTab = UINavTab::CHAT;
+    if (ImGui::Selectable("档案 (Profile)", currentTab == UINavTab::PROFILE, 0, ImVec2(0, 45))) currentTab = UINavTab::PROFILE;
+    if (ImGui::Selectable("系统 (System)", currentTab == UINavTab::SYSTEM, 0, ImVec2(0, 45))) {
+        currentTab = UINavTab::SYSTEM;
+        scanSaveFiles(); // 进入系统页时刷新存档
+    }
+    ImGui::PopStyleVar();
 
-    ImGui::BeginChild("ChatHistory", ImVec2(0, -90.0f), true, ImGuiWindowFlags_HorizontalScrollbar);
-    
-    for (const auto& chat : uiChatHistory) {
-        ImVec4 textColor;
-        bool isInsight = false; // 用于标记是否是洞察信息
+    ImGui::EndChild();
+    ImGui::SameLine();
 
-        // 1. 分配颜色
-        if (chat.first == "[暗中洞察]") {
-            textColor = ImVec4(0.8f, 0.6f, 1.0f, 1.0f); // 神秘的紫色/亮紫色
-            isInsight = true;
-        } else if (chat.first == "系统" || chat.first == "【GM 场景导入】" || chat.first == "【GM 突发事件】") {
-            textColor = ImVec4(0.6f, 0.6f, 0.6f, 1.0f); // 旁白灰色
-        } else if (chat.first == mainPlayer.getName()) {
-            textColor = ImVec4(0.5f, 0.7f, 0.9f, 1.0f); // 玩家蓝色
-        } else {
-            textColor = ImVec4(0.9f, 0.5f, 0.6f, 1.0f); // 女主粉色
+    // ================= 右侧主内容区 =================
+    ImGui::BeginChild("MainContent", ImVec2(0, 0), false);
+
+    if (currentTab == UINavTab::CHAT) {
+        // --- 聊天 Header ---
+        ImGui::BeginChild("ChatHeader", ImVec2(0, 50), true);
+        std::string npcNameDisplay = activeNPC ? activeNPC->getName() : "未邂逅";
+        std::string timeStr = (currentTime == TimeOfDay::MORNING) ? "清晨" : (currentTime == TimeOfDay::NOON) ? "午后" : "深夜";
+        
+        ImGui::SetCursorPos(ImVec2(15, 15));
+        ImGui::Text("正在与 %s 聊天  |  时间环境: %s", npcNameDisplay.c_str(), timeStr.c_str());
+        
+        if (isWaitingForReply) { 
+            ImGui::SameLine(ImGui::GetWindowWidth() - 160); 
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "对方正在思索回复..."); 
         }
+        ImGui::EndChild();
+
+        // --- 聊天主体区 ---
+        // 动态计算底部输入区高度 (如果发生事件，需要更多空间放置选项按钮)
+        float input_area_height = isEventActive ? ImGui::GetFrameHeightWithSpacing() * 5.0f : 60.0f;
         
-        // 2. 渲染文本
-        ImGui::PushStyleColor(ImGuiCol_Text, textColor);
+        ImGui::BeginChild("ChatHistoryArea", ImVec2(0, -input_area_height), false, ImGuiWindowFlags_NoScrollWithMouse);
         
-        if (isInsight) {
-            // 如果是洞察信息，把冒号去掉，改成空格，比如：[暗中洞察] (共情检定成功) 她手心出汗了...
-            ImGui::TextWrapped("%s %s", chat.first.c_str(), chat.second.c_str());
+        // 绘制聊天背景图 (如果有)
+        ImVec2 chatMin = ImGui::GetWindowPos();
+        ImVec2 chatMax = ImVec2(chatMin.x + ImGui::GetWindowSize().x, chatMin.y + ImGui::GetWindowSize().y);
+        if (chatBgLoader.isLoaded()) {
+            ImGui::GetWindowDrawList()->AddImage((void*)(intptr_t)chatBgLoader.getTextureID(), chatMin, chatMax, ImVec2(0,0), ImVec2(1,1), IM_COL32(255,255,255,180));
         } else {
-            // 普通对话
-            ImGui::TextWrapped("%s: %s", chat.first.c_str(), chat.second.c_str());
+            ImGui::GetWindowDrawList()->AddRectFilled(chatMin, chatMax, IM_COL32(245, 245, 248, 255)); // 浅灰背景兜底
         }
-        
-        ImGui::PopStyleColor();
+
+        // 内部嵌套一个可滚动的窗口用于文本排列
+        ImGui::BeginChild("ChatScrollRegion", ImVec2(0, 0), false, ImGuiWindowFlags_HorizontalScrollbar);
         ImGui::Spacing();
-    }
-
-    if (isWaitingForReply) {
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s 正在思考...", activeNPC->getName().c_str());
-    }
-    
-    if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
-        ImGui::SetScrollHereY(1.0f);
-    }
-    ImGui::EndChild(); // 结束聊天记录区
-
-    // 底部动作交互区
-    ImGui::BeginChild("ActionArea", ImVec2(0, 0), false);
-    
-    if (isGeneratingNPC) {
-        ImGui::BeginDisabled(); ImGui::Button("正在生成...", ImVec2(100, 0)); ImGui::EndDisabled();
-    } else {
-        if (ImGui::Button("邂逅新角色", ImVec2(100, 0))) {
-            isGeneratingNPC = true;
-            futureProfile = ProfileGenerator::generateRandomProfileAsync(std::string(worldSettingBuf));
-        }
-    }
-    ImGui::SameLine();
-    if (isGeneratingPlayer) {
-        ImGui::BeginDisabled(); ImGui::Button("重塑中...", ImVec2(100, 0)); ImGui::EndDisabled();
-    } else {
-        if (ImGui::Button("重置人生", ImVec2(100, 0))) {
-            isGeneratingPlayer = true;
-            futurePlayerProfile = ProfileGenerator::generatePlayerProfileAsync(std::string(worldSettingBuf));
-        }
-    }
-    ImGui::SameLine();
-
-    if (ImGui::Button("保存命运线", ImVec2(100, 0))) {
-        std::filesystem::create_directory("saves");
-        auto t = std::time(nullptr);
-        auto tm = *std::localtime(&t);
-        char timeStrBuf[32];
-        std::strftime(timeStrBuf, sizeof(timeStrBuf), "%Y%m%d_%H%M%S", &tm);
-        std::string savePath = "saves/save_" + std::string(timeStrBuf) + ".json";
         
-        if (saveGame(savePath)) {
-            uiChatHistory.push_back({"系统", "（当前命运的轨迹已保存）"});
-            scanSaveFiles(); 
-        }
-    }
-    ImGui::SameLine();
+        for (const auto& chat : uiChatHistory) {
+            ImVec4 textColor;
+            bool isInsight = false;
 
-    if (activeNPC != nullptr && !hasEncounterStarted) {
-        if (isGeneratingEncounter) {
-            ImGui::BeginDisabled(); ImGui::Button("正在靠近...", ImVec2(100, 0)); ImGui::EndDisabled();
-        } else {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.96f, 0.54f, 0.60f, 1.0f)); 
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.98f, 0.64f, 0.70f, 1.0f)); 
-            if (ImGui::Button("开始邂逅", ImVec2(120, 0))) {
-                isGeneratingEncounter = true;
-                futureEncounter = ProfileGenerator::generateEncounterAsync(std::string(worldSettingBuf), mainPlayer, currentNPC);
+            // 保留原有的颜色分配逻辑
+            if (chat.first == "[暗中洞察]") {
+                textColor = ImVec4(0.8f, 0.6f, 1.0f, 1.0f);
+                isInsight = true;
+            } else if (chat.first == "系统" || chat.first == "【GM 场景导入】" || chat.first == "【GM 突发事件】" || chat.first == "【GM 场景重构】") {
+                textColor = ImVec4(0.4f, 0.4f, 0.4f, 1.0f);
+            } else if (chat.first == mainPlayer.getName()) {
+                textColor = ImVec4(0.3f, 0.5f, 0.8f, 1.0f); 
+            } else {
+                textColor = ImVec4(0.9f, 0.4f, 0.5f, 1.0f); 
             }
-            ImGui::PopStyleColor(2);
-        }
-    }
-    ImGui::Spacing();
-
-    // 常规聊天模式 VS 事件选择模式
-    if (isEventActive) {
-        for (size_t i = 0; i < currentEvent.choices.size(); ++i) {
-            std::string choiceText = currentEvent.choices[i].text;
-            std::string choiceStat = currentEvent.choices[i].stat;
-            std::string displayStat = choiceStat;    
-
-            std::string buttonLabel = choiceText + " [" + displayStat + "检定]##" + std::to_string(i);
             
-            if (ImGui::Button(buttonLabel.c_str())) {
-                
-                int playerStatValue = 50; 
-                if (choiceStat == "physique") playerStatValue = mainPlayer.getPhysique();
-                else if (choiceStat == "intellect") playerStatValue = mainPlayer.getIntellect();
-                else if (choiceStat == "charm") playerStatValue = mainPlayer.getCharm();
-                else if (choiceStat == "wealth") playerStatValue = mainPlayer.getWealth();
-                else if (choiceStat == "empathy") playerStatValue = mainPlayer.getEmpathy();
-                else if (choiceStat == "luck") playerStatValue = mainPlayer.getLuck();
+            // 渲染文本
+            ImGui::PushStyleColor(ImGuiCol_Text, textColor);
+            if (isInsight) {
+                ImGui::TextWrapped("%s %s", chat.first.c_str(), chat.second.c_str());
+            } else {
+                ImGui::TextWrapped("%s: %s", chat.first.c_str(), chat.second.c_str());
+            }
+            ImGui::PopStyleColor();
+            ImGui::Spacing();
+        }
 
-                // 【终极重构】：D100 命运掷骰规则
-                int roll = rand() % 100 + 1; // 1 - 100
-                std::string rollResult;
-                std::string exactRollDesc = "(掷出: " + std::to_string(roll) + " / 要求: " + std::to_string(playerStatValue) + ")";
+        if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) ImGui::SetScrollHereY(1.0f);
+        ImGui::EndChild();
+        ImGui::EndChild();
 
-                // 判断逻辑：加入大成功与大失败
-                if (roll <= 5) {
-                    rollResult = "【大成功 (Critical Success)】";
-                } else if (roll > 95) {
-                    rollResult = "【大失败 (Critical Failure)】";
-                } else if (roll <= playerStatValue) {
-                    rollResult = "【检定成功 (Success)】";
-                } else {
-                    rollResult = "【检定失败 (Failure)】";
-                }
+        // --- 聊天底部输入 / 事件检定区 ---
+        ImGui::BeginChild("ChatInput", ImVec2(0, 0), true);
+        
+        if (isEventActive) {
+            ImGui::SetCursorPos(ImVec2(10, 10));
+            ImGui::TextColored(ImVec4(0.9f, 0.4f, 0.4f, 1.0f), "【突发事件！请做出选择】");
+            ImGui::Spacing();
+            
+            // 完全保留原有的 D100 检定核心逻辑
+            for (size_t i = 0; i < currentEvent.choices.size(); ++i) {
+                std::string choiceText = currentEvent.choices[i].text;
+                std::string choiceStat = currentEvent.choices[i].stat;
+                std::string buttonLabel = choiceText + " [" + choiceStat + "检定]##" + std::to_string(i);
+                
+                if (ImGui::Button(buttonLabel.c_str(), ImVec2(-1, 30))) {
+                    int playerStatValue = 50; 
+                    if (choiceStat == "physique") playerStatValue = mainPlayer.getPhysique();
+                    else if (choiceStat == "intellect") playerStatValue = mainPlayer.getIntellect();
+                    else if (choiceStat == "charm") playerStatValue = mainPlayer.getCharm();
+                    else if (choiceStat == "wealth") playerStatValue = mainPlayer.getWealth();
+                    else if (choiceStat == "empathy") playerStatValue = mainPlayer.getEmpathy();
+                    else if (choiceStat == "luck") playerStatValue = mainPlayer.getLuck();
 
-                // UI 上屏：让玩家感受到掷骰子的刺激感
-                uiChatHistory.push_back({mainPlayer.getName(), "尝试: " + choiceText + " [" + displayStat + "检定]"});
-                uiChatHistory.push_back({"系统", "命运判定：" + rollResult + " " + exactRollDesc});
-                
-                isEventActive = false;
-                isWaitingForReply = true;
-                
-                // 【终极重构】：给大模型极其详尽的战报上下文！
-                std::string timeContext = (currentTime == TimeOfDay::MORNING) ? "清晨" : 
-                                          (currentTime == TimeOfDay::NOON) ? "午后" : "深夜";
-                
-                futureReply = std::async(std::launch::async, [this, choiceText, rollResult, roll, timeContext]() {
+                    int roll = rand() % 100 + 1; 
+                    std::string rollResult;
+                    std::string exactRollDesc = "(掷出: " + std::to_string(roll) + " / 要求: " + std::to_string(playerStatValue) + ")";
+
+                    if (roll <= 5) rollResult = "【大成功 (Critical Success)】";
+                    else if (roll > 95) rollResult = "【大失败 (Critical Failure)】";
+                    else if (roll <= playerStatValue) rollResult = "【检定成功 (Success)】";
+                    else rollResult = "【检定失败 (Failure)】";
+
+                    uiChatHistory.push_back({mainPlayer.getName(), "尝试: " + choiceText + " [" + choiceStat + "检定]"});
+                    uiChatHistory.push_back({"系统", "命运判定：" + rollResult + " " + exactRollDesc});
+                    
+                    isEventActive = false;
+                    isWaitingForReply = true;
+                    
+                    std::string timeContext = (currentTime == TimeOfDay::MORNING) ? "清晨" : (currentTime == TimeOfDay::NOON) ? "午后" : "深夜";
                     std::string contextualInput = 
                         "（系统机制输入，请勿暴露给玩家：当前时间是" + timeContext + "。\n"
                         "玩家采取了行动：【" + choiceText + "】。\n"
                         "底层 TRPG 引擎进行了掷骰判定，结果为：" + rollResult + "（点数 " + std::to_string(roll) + "）。\n"
                         "指令：请作为 GM 和 NPC 的集合体，严格根据这个判定结果推进剧情。\n"
-                        "1. 如果是大成功，请描写玩家的行动引发了极其帅气、完美的奇迹反应，NPC 好感度飙升。\n"
-                        "2. 如果是大失败，请描写极其社死、倒霉、甚至搞笑的意外，NPC 会感到震惊或无语。\n"
+                        "1. 如果是大成功，请描写奇迹反应，NPC 好感度飙升。\n"
+                        "2. 如果是大失败，请描写极其倒霉的意外，NPC 感到无语。\n"
                         "3. 请用第一人称（NPC 视角）或第二人称旁白融合的方式作答。）";
-                        
-                    return activeNPC->interact(contextualInput, mainPlayer);
-                });
+
+                    futureReply = std::async(std::launch::async, [activeNPC = this->activeNPC, playerCopy = this->mainPlayer, contextualInput]() {
+                        return activeNPC->interact(contextualInput, playerCopy);
+                    });
+                }
             }
+        } else {
+            // 普通对话输入区
+            ImGui::SetCursorPos(ImVec2(10, 10));
+            static char inputBuf[512] = ""; 
+            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 90);
+            
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 10));
+            bool pressed = ImGui::InputText("##ChatInput", inputBuf, IM_ARRAYSIZE(inputBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+            ImGui::PopStyleVar();
+            
+            ImGui::SameLine();
+            
+            bool disableInput = isWaitingForReply || isGeneratingTransition || activeNPC == nullptr || !hasEncounterStarted;
+            if (disableInput) ImGui::BeginDisabled();
+            
+            if (ImGui::Button("发送", ImVec2(75, 40)) || (pressed && !disableInput)) {
+                if (strlen(inputBuf) > 0) {
+                    std::string userText = inputBuf; 
+                    uiChatHistory.push_back({mainPlayer.getName(), userText}); 
+                    inputBuf[0] = '\0'; 
+                    isWaitingForReply = true;
+                    
+                    std::string timeCtx = (currentTime == TimeOfDay::MORNING) ? "清晨" : (currentTime == TimeOfDay::NOON) ? "午后" : "深夜";
+                    std::string hiddenInput;
+                    
+                    // 保留疲劳回合判断
+                    if (chatTurns >= 5) { 
+                        hiddenInput = "（系统提示：时间是" + timeCtx + "。你们在这个场景聊得较久了。请提出转场或告别，并务必将 ready_to_transition 设为 true）\n玩家说：" + userText;
+                    } else {
+                        hiddenInput = "（系统提示：当前游戏时间是" + timeCtx + "）\n玩家说：" + userText;
+                    }
+
+                    futureReply = std::async(std::launch::async, [activeNPC = this->activeNPC, playerCopy = this->mainPlayer, hiddenInput]() {
+                        return activeNPC->interact(hiddenInput, playerCopy);
+                    });
+                }
+            }
+            if (disableInput) ImGui::EndDisabled();
         }
-    } else {
-        static char inputBuf[512] = ""; 
-        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 80);
-        bool pressed = ImGui::InputText("##ChatInput", inputBuf, IM_ARRAYSIZE(inputBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::EndChild();
+
+    } 
+    else if (currentTab == UINavTab::PROFILE) {
+        // ================= 档案页面 =================
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.8f, 0.6f, 0.8f, 1.0f), " 【世界与灵魂档案】");
+        ImGui::Separator();
+        ImGui::Spacing();
+        
+        // 左半边放立绘
+        ImGui::BeginChild("ProfileLeft", ImVec2(ImGui::GetContentRegionAvail().x * 0.35f, 0), true);
+        if (isGeneratingPortrait) {
+            ImGui::SetCursorPosY(ImGui::GetWindowHeight() * 0.45f);
+            ImGui::TextDisabled("  ... AI 画师描绘中 ...");
+        } else if (npcImageLoader.isLoaded()) {
+            ImVec2 availSize = ImGui::GetContentRegionAvail();
+            float aspect = (float)npcImageLoader.getWidth() / (float)npcImageLoader.getHeight();
+            ImVec2 imageSize;
+            if (availSize.x / aspect <= availSize.y) imageSize = ImVec2(availSize.x, availSize.x / aspect);
+            else imageSize = ImVec2(availSize.y * aspect, availSize.y);
+            
+            float offsetX = (availSize.x - imageSize.x) * 0.5f;
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offsetX);
+            ImGui::Image((void*)(intptr_t)npcImageLoader.getTextureID(), imageSize);
+        } else {
+            ImGui::SetCursorPosY(ImGui::GetWindowHeight() * 0.45f);
+            ImGui::Text("暂无立绘数据");
+        }
+        ImGui::EndChild();
+        
         ImGui::SameLine();
         
-        bool disableInput = isWaitingForReply || isGeneratingTransition || activeNPC == nullptr || !hasEncounterStarted;
-        if (disableInput) ImGui::BeginDisabled();
+        // 右半边放详细情报
+        ImGui::BeginChild("ProfileRight", ImVec2(0, 0), false);
         
-        if (ImGui::Button("发送") || (pressed && !disableInput)) {
-            if (strlen(inputBuf) > 0) {
-                std::string userText = inputBuf; 
-                uiChatHistory.push_back({mainPlayer.getName(), userText}); 
-                inputBuf[0] = '\0'; 
-                isWaitingForReply = true;
-                
-                std::string timeCtx = (currentTime == TimeOfDay::MORNING) ? "清晨" : 
-                                      (currentTime == TimeOfDay::NOON) ? "午后" : "深夜";
-                std::string hiddenInput = "（系统提示：当前游戏时间是" + timeCtx + "）" + userText;
-                
-                if (chatTurns >= 5) { 
-                    hiddenInput = "（系统提示：你们在这个场景聊得有一段时间了。请寻找合适的借口自然地结束当前话题。你可以选择提议去附近的另一个地方继续约会，或者直接提出告别结束今天的见面，并务必将 ready_to_transition 设为 true）\n玩家说：" + userText;
-                } else {
-                    hiddenInput = "（系统提示：当前游戏时间是" + timeCtx + "）\n玩家说：" + userText;
+        ImGui::TextColored(ImVec4(0.3f, 0.7f, 0.9f, 1.0f), "【主角信息】: %s", mainPlayer.getName().c_str());
+        ImGui::TextWrapped("【身世】: %s", mainPlayer.getBackstory().c_str());
+        ImGui::Spacing();
+        if (isGeneratingPlayer) {
+            ImGui::BeginDisabled(); ImGui::Button("重塑中...", ImVec2(120, 35)); ImGui::EndDisabled();
+        } else {
+            if (ImGui::Button("重塑人生", ImVec2(120, 35))) { isGeneratingPlayer = true; futurePlayerProfile = ProfileGenerator::generatePlayerProfileAsync(std::string(worldSettingBuf)); }
+        }
+        
+        ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+        
+        ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.6f, 1.0f), "【邂逅对象】: %s", currentNPC.is_generated ? currentNPC.name.c_str() : "无");
+        if (currentNPC.is_generated) {
+            ImGui::Text("好感度: %d  |  初始态度: %s", currentNPC.initial_affection, currentNPC.initial_attitude.c_str());
+            ImGui::TextWrapped("【外貌】: %s", currentNPC.appearance.c_str());
+            ImGui::TextWrapped("【性格】: %s", currentNPC.personality_core.c_str());
+            ImGui::TextWrapped("【执念】: %s", currentNPC.hidden_trauma.c_str());
+        }
+        ImGui::Spacing();
+        
+        if (isGeneratingNPC) {
+            ImGui::BeginDisabled(); ImGui::Button("寻找中...", ImVec2(120, 35)); ImGui::EndDisabled();
+        } else {
+            if (ImGui::Button("寻找新角色", ImVec2(120, 35))) { isGeneratingNPC = true; futureProfile = ProfileGenerator::generateRandomProfileAsync(std::string(worldSettingBuf)); }
+        }
+        ImGui::SameLine();
+        
+        if (activeNPC != nullptr && !hasEncounterStarted) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.96f, 0.54f, 0.60f, 1.0f)); 
+            if (isGeneratingEncounter) {
+                ImGui::BeginDisabled(); ImGui::Button("靠近中...", ImVec2(120, 35)); ImGui::EndDisabled();
+            } else {
+                if (ImGui::Button("开始邂逅", ImVec2(120, 35))) {
+                    isGeneratingEncounter = true;
+                    futureEncounter = ProfileGenerator::generateEncounterAsync(std::string(worldSettingBuf), mainPlayer, currentNPC);
                 }
+            }
+            ImGui::PopStyleColor();
+        }
 
-                futureReply = std::async(std::launch::async, [activeNPC = this->activeNPC, playerCopy = this->mainPlayer, hiddenInput]() {
-                    return activeNPC->interact(hiddenInput, playerCopy);
-                });
+        ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+        
+        ImGui::Text("【当前世界观设定】:");
+        ImGui::InputTextMultiline("##WorldSetting", worldSettingBuf, IM_ARRAYSIZE(worldSettingBuf), ImVec2(-1, 80));
+        ImGui::Spacing();
+        if (isGeneratingWorld) {
+            ImGui::BeginDisabled(); ImGui::Button("重构中...", ImVec2(120, 35)); ImGui::EndDisabled();
+        } else {
+            if (ImGui::Button("AI重构世界", ImVec2(120, 35))) { 
+                isGeneratingWorld = true; 
+                futureWorldSetting = ProfileGenerator::generateRandomWorldSettingAsync(); 
             }
         }
-        if (disableInput) ImGui::EndDisabled();
-    }
-    
-    ImGui::EndChild(); // 结束动作交互区
+        
+        ImGui::EndChild(); // End ProfileRight
+        
+    } 
+    else if (currentTab == UINavTab::SYSTEM) {
+        // ================= 系统页面 =================
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.5f, 0.7f, 0.9f, 1.0f), " 【时间与记忆控制中心】");
+        ImGui::Separator();
+        ImGui::Spacing();
+        
+        if (ImGui::Button("保存当前命运线 (Save Game)", ImVec2(240, 45))) {
+            std::filesystem::create_directory("saves");
+            auto t = std::time(nullptr); auto tm = *std::localtime(&t); char tb[32];
+            std::strftime(tb, sizeof(tb), "%Y%m%d_%H%M%S", &tm);
+            if (saveGame("saves/save_" + std::string(tb) + ".json")) {
+                uiChatHistory.push_back({"系统", "（当前命运的轨迹已顺利封存）"});
+                scanSaveFiles(); // 立刻刷新
+            }
+        }
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.4f, 0.4f, 1.0f));
+        if (ImGui::Button("开启全新游戏 (New Game)", ImVec2(240, 45))) { 
+            startNewGame(); 
+            currentTab = UINavTab::PROFILE; // 切回档案让玩家输入
+        }
+        ImGui::PopStyleColor();
+        
+        ImGui::Spacing(); ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.6f, 0.5f, 0.6f, 1.0f), "—— 沉睡在时间缝隙中的记忆碎片 ——");
+        ImGui::Spacing();
 
-    ImGui::End(); // MainGameWindow 结束
+        if (parsedSaves.empty()) {
+            ImGui::TextDisabled("当前世界线一片空白，没有任何命运的记录。");
+        } else {
+            // 完美保留你原有的精美卡片渲染逻辑
+            ImGui::BeginChild("SaveCardsRegion", ImVec2(0, 0), false, ImGuiWindowFlags_HorizontalScrollbar);
+            for (size_t i = 0; i < parsedSaves.size(); ++i) {
+                const auto& save = parsedSaves[i];
+                
+                ImGui::PushID(i);
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(1.0f, 1.0f, 1.0f, 0.05f));
+                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
+                ImGui::BeginChild("Card", ImVec2(0, 85), true, ImGuiWindowFlags_NoScrollbar);
+
+                ImGui::SetCursorPos(ImVec2(15, 15));
+                ImGui::TextColored(ImVec4(0.85f, 0.45f, 0.55f, 1.0f), "邂逅对象: %s", save.npcName.c_str());
+                ImGui::SameLine(220); 
+                ImGui::TextDisabled("时标: %s", save.timeStr.c_str());
+
+                ImGui::SetCursorPos(ImVec2(15, 45));
+                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "世界羁绊:");
+                ImGui::SameLine(90);
+                
+                ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.96f, 0.64f, 0.69f, 1.0f)); 
+                ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.2f, 0.2f, 0.2f, 1.0f)); 
+                ImGui::ProgressBar(save.affection / 100.0f, ImVec2(200, 16), std::to_string(save.affection).c_str());
+                ImGui::PopStyleColor(2);
+
+                ImGui::SetCursorPos(ImVec2(ImGui::GetWindowWidth() - 180, 25));
+                
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.5f, 0.6f, 1.0f));
+                if (ImGui::Button("唤醒回忆", ImVec2(80, 35))) { 
+                    if (loadGame("saves/" + save.fileName)) {
+                        uiChatHistory.push_back({"系统", "（时空震荡，已成功回溯至 " + save.npcName + " 的时间线）"});
+                        currentTab = UINavTab::CHAT; // 读档成功自动切回聊天窗
+                    }
+                }
+                ImGui::PopStyleColor();
+                ImGui::SameLine();
+                
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.3f, 0.3f, 1.0f));
+                if (ImGui::Button("抹除", ImVec2(60, 35))) {
+                    try {
+                        std::filesystem::remove("saves/" + save.fileName);
+                        scanSaveFiles(); 
+                        ImGui::PopStyleColor();
+                        ImGui::EndChild();
+                        ImGui::PopStyleVar();
+                        ImGui::PopStyleColor();
+                        ImGui::PopID();
+                        break; // 数组变化，打断当帧循环
+                    } catch (...) {}
+                }
+                ImGui::PopStyleColor();
+
+                ImGui::EndChild();
+                ImGui::PopStyleVar();
+                ImGui::PopStyleColor();
+                ImGui::PopID();
+                ImGui::Spacing();
+            }
+            ImGui::EndChild();
+        }
+    }
+
+    ImGui::EndChild(); // End MainContent
+    ImGui::End(); // End MainGameWindow
 }
 
 void GameManager::runLoop() {

@@ -10,14 +10,17 @@
 #include "ProfileGenerator.h"
 #include "GameEvent.h"
 #include "ImageLoader.h"
+#include "imgui.h"
 
 enum class TimeOfDay { MORNING, NOON, NIGHT };
 
+enum class UINavTab { CHAT, PROFILE, SYSTEM };
+
 class GameManager {
 private:
-    bool showLoadMenu = false;
-
     bool isRunning = true; 
+
+    UINavTab currentTab = UINavTab::CHAT;
 
     TimeOfDay currentTime = TimeOfDay::MORNING;
 
@@ -75,9 +78,14 @@ private:
     std::future<bool> futurePortrait;
     bool isGeneratingPortrait = false;
 
+    ImageLoader chatBgLoader;
+    std::future<std::string> futureBg;
+    bool isGeneratingBg = false;
+
     // ================= [内部私有方法] =================
     void checkAsyncTasks(); 
-    void renderUI();        
+    void renderUI(); 
+    void drawChatBubble(const std::string& name, const std::string& text, int type);      
 
 public:
     GameManager();

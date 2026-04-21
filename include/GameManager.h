@@ -82,10 +82,14 @@ private:
     std::future<std::string> futureBg;
     bool isGeneratingBg = false;
 
+    ImageLoader playerImageLoader;
+    std::future<bool> futurePlayerPortrait;
+    bool isGeneratingPlayerPortrait = false;
+
     // ================= [内部私有方法] =================
     void checkAsyncTasks(); 
     void renderUI(); 
-    void drawChatBubble(const std::string& name, const std::string& text, int type);      
+    void drawChatBubble(const std::string& name, const std::string& text, int type, ImTextureID avatar_tex = 0);
 
 public:
     GameManager();

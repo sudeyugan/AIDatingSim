@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include "json.hpp"
+#include <future>
 
 class Player {
 private:
@@ -15,6 +16,8 @@ private:
     int empathy;    // 共情 (影响隐性感知)
     int luck;       // 运气 (影响概率判定)
 
+    std::string portraitPath;
+
 public:
     Player();
     Player(std::string pName);
@@ -28,6 +31,10 @@ public:
 
     std::string getName() const;
     std::string getBackstory() const; 
+    std::future<bool> generatePortraitAsync();
+
+    std::string getPortraitPath() const;
+    void setPortraitPath(const std::string& path);
 
     // Setter
     void setAttributes(int p, int i, int c, int w, int e, int l);

@@ -234,12 +234,27 @@ void GameManager::checkAsyncTasks() {
             mainPlayer.setBackstory(newProfile.second);
             isGeneratingPlayer = false;          
             
-            // 保留 NPC！不销毁 activeNPC！
+            // ===========触发主角头像生成 ===========
+            playerImageLoader.Free(); // 清空老头像
+            isGeneratingPlayerPortrait = true;
+            futurePlayerPortrait = mainPlayer.generatePortraitAsync();
+            // ===============================================
+
             uiChatHistory.clear();
             hasEncounterStarted = false;           
-
             uiChatHistory.push_back({"系统", "命运的齿轮转动，你以新身份降临。"});
+        }
+    }
 
+    if (isGeneratingPlayerPortrait && futurePlayerPortrait.valid()) {
+        if (futurePlayerPortrait.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            bool success = futurePlayerPortrait.get();
+            isGeneratingPlayerPortrait = false;
+            
+            if (success && !mainPlayer.getPortraitPath().empty()) {
+                // 读取硬盘图片，转换成 OpenGL 纹理
+                playerImageLoader.LoadFromFile(mainPlayer.getPortraitPath());
+            }
         }
     }
 
@@ -328,98 +343,169 @@ void GameManager::checkAsyncTasks() {
     }
 }
 
-void GameManager::drawChatBubble(const std::string& name, const std::string& text, int type) {
+void GameManager::drawChatBubble(const std::string& name, const std::string& text, int type, ImTextureID avatar_tex){
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
     float avail_width = ImGui::GetContentRegionAvail().x;
-    float wrap_width = avail_width * 0.55f; // 限制气泡最大宽度
+    float wrap_width = avail_width * 0.60f; 
     
-    ImVec2 text_size = ImGui::CalcTextSize(text.c_str(), NULL, true, wrap_width);
-    ImVec2 padding(16, 14); // 稍微增加一点内边距，让文字呼吸感更强
-    ImVec2 bubble_size(text_size.x + padding.x * 2, text_size.y + padding.y * 2);
+    ImVec2 padding(20, 16);
+    float avatar_radius = 24.0f;
+    float avatar_size = avatar_radius * 2;
+    float item_spacing = 16.0f;
+    float bubble_rounding = 16.0f;
     
-    float avatar_size = 44.0f;
-    float item_spacing = 12.0f;
-    
-    // --- 居中系统提示文本优化 ---
+    // --- 居中系统提示文本 ---
     if (type == 0 || type == 3) { 
-        ImGui::SetCursorPosX((avail_width - text_size.x) * 0.5f);
-        // 给系统文字加一个极其微弱的半透明圆角底色，看起来像微信的系统提示
-        ImVec2 sys_pos = ImGui::GetCursorScreenPos();
-        draw_list->AddRectFilled(ImVec2(sys_pos.x - 10, sys_pos.y - 4), 
-                                 ImVec2(sys_pos.x + text_size.x + 10, sys_pos.y + text_size.y + 4), 
-                                 IM_COL32(0, 0, 0, 20), 12.0f);
-                                 
-        ImGui::PushStyleColor(ImGuiCol_Text, type == 3 ? ImVec4(0.6f, 0.4f, 0.8f, 1.0f) : ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
-        ImGui::TextWrapped("%s", text.c_str());
+        ImGui::Spacing();
+        ImVec2 start_cursor = ImGui::GetCursorScreenPos();
+        
+        // 分离图层：1为前景(文字)，0为背景(底框)
+        draw_list->ChannelsSplit(2);
+        draw_list->ChannelsSetCurrent(1); 
+        
+        ImVec2 calc_size = ImGui::CalcTextSize(text.c_str(), NULL, false, avail_width - 40);
+        ImGui::SetCursorPosX((avail_width - calc_size.x) * 0.5f);
+        ImVec2 text_pos = ImGui::GetCursorScreenPos();
+        
+        ImGui::PushStyleColor(ImGuiCol_Text, type == 3 ? ImVec4(0.65f, 0.45f, 0.85f, 1.0f) : ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+        ImGui::PushTextWrapPos(text_pos.x + avail_width - 40);
+        ImGui::BeginGroup(); // 打包文字组以获取精确大小
+        ImGui::TextUnformatted(text.c_str());
+        ImGui::EndGroup();
+        ImVec2 real_text_size = ImGui::GetItemRectSize(); // 获取真实渲染后的完美尺寸
+        ImGui::PopTextWrapPos();
         ImGui::PopStyleColor();
-        ImGui::Spacing(); ImGui::Spacing();
+        
+        draw_list->ChannelsSetCurrent(0); 
+        ImVec2 sys_bg_min = ImVec2(text_pos.x - 16, text_pos.y - 6);
+        ImVec2 sys_bg_max = ImVec2(text_pos.x + real_text_size.x + 16, text_pos.y + real_text_size.y + 6);
+        draw_list->AddRectFilled(sys_bg_min, sys_bg_max, IM_COL32(0, 0, 0, 15), 20.0f);
+        
+        draw_list->ChannelsMerge(); // 合并图层
+        ImGui::SetCursorScreenPos(ImVec2(start_cursor.x, sys_bg_max.y + 15.0f));
+        ImGui::Dummy(ImVec2(0.0f, 0.0f)); 
         return;
     }
 
-    ImVec2 cursor_pos = ImGui::GetCursorScreenPos();
-    float line_height = std::max(bubble_size.y, avatar_size) + item_spacing * 2;
+    ImVec2 start_cursor = ImGui::GetCursorScreenPos();
     std::string initial = name.length() > 0 ? name.substr(0, std::min<size_t>(3, name.length())) : "?";
     ImVec2 char_size = ImGui::CalcTextSize(initial.c_str());
 
-    // 阴影配置
-    ImVec2 shadow_offset(0.0f, 4.0f); // 向下偏移
-    ImU32 shadow_color = IM_COL32(0, 0, 0, 25); // 非常淡的黑影
+    // 同样将对话分为文字前景(1)和气泡背景(0)
+    draw_list->ChannelsSplit(2);
+    draw_list->ChannelsSetCurrent(1); 
+    
+    ImVec2 text_start_pos;
+    float line_height = 0.0f;
 
-    if (type == 1) { // ========== 玩家（靠右，绿色系） ==========
-        float start_x = cursor_pos.x + avail_width - bubble_size.x - avatar_size - item_spacing * 2;
-        ImVec2 bubble_pos = ImVec2(start_x, cursor_pos.y);
+    if (type == 1) { // ========== 玩家（靠右） ==========
+        // 1. 预估宽度用于右对齐
+        ImVec2 calc_size = ImGui::CalcTextSize(text.c_str(), NULL, false, wrap_width);
+        float bubble_width = calc_size.x + padding.x * 2;
         
-        // 1. 画气泡阴影
-        draw_list->AddRectFilled(ImVec2(bubble_pos.x + shadow_offset.x, bubble_pos.y + shadow_offset.y), 
-                                 ImVec2(bubble_pos.x + bubble_size.x + shadow_offset.x, bubble_pos.y + bubble_size.y + shadow_offset.y), 
-                                 shadow_color, 12.0f);
-        // 2. 画气泡本体 (现代化的微渐变感，这里用实色替代)
-        ImU32 bg_color = IM_COL32(165, 245, 120, 240); // 稍微亮一点的苹果绿
-        draw_list->AddRectFilled(bubble_pos, ImVec2(bubble_pos.x + bubble_size.x, bubble_pos.y + bubble_size.y), bg_color, 12.0f); 
-        // 3. 气泡微小描边 (增加精致感)
-        draw_list->AddRect(bubble_pos, ImVec2(bubble_pos.x + bubble_size.x, bubble_pos.y + bubble_size.y), IM_COL32(140, 220, 100, 200), 12.0f, 0, 1.0f);
-
-        // 文字
-        ImGui::SetCursorScreenPos(ImVec2(bubble_pos.x + padding.x, bubble_pos.y + padding.y));
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.15f, 0.25f, 0.15f, 1.0f)); // 深绿色文字比纯黑更护眼
-        ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + wrap_width);
+        // 2. 定位头像与气泡起始点
+        float avatar_x = start_cursor.x + avail_width - avatar_radius - item_spacing * 2;
+        ImVec2 avatar_center = ImVec2(avatar_x, start_cursor.y + avatar_radius);
+        ImVec2 bubble_pos = ImVec2(avatar_x - avatar_radius - item_spacing - bubble_width, start_cursor.y);
+        text_start_pos = ImVec2(bubble_pos.x + padding.x, bubble_pos.y + padding.y);
+        
+        // 3. 渲染文字
+        ImGui::SetCursorScreenPos(text_start_pos);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.15f, 0.25f, 0.15f, 1.0f)); 
+        ImGui::PushTextWrapPos(text_start_pos.x + wrap_width);
+        ImGui::BeginGroup();
         ImGui::TextUnformatted(text.c_str());
-        ImGui::PopTextWrapPos(); ImGui::PopStyleColor();
+        ImGui::EndGroup();
+        ImVec2 real_text_size = ImGui::GetItemRectSize(); // 拿到真实换行后的高度
+        ImGui::PopTextWrapPos(); 
+        ImGui::PopStyleColor();
         
-        // 玩家头像阴影与本体
-        ImVec2 avatar_pos = ImVec2(bubble_pos.x + bubble_size.x + item_spacing, cursor_pos.y);
-        draw_list->AddRectFilled(ImVec2(avatar_pos.x, avatar_pos.y + 3), ImVec2(avatar_pos.x + avatar_size, avatar_pos.y + avatar_size + 3), shadow_color, 8.0f);
-        draw_list->AddRectFilled(avatar_pos, ImVec2(avatar_pos.x + avatar_size, avatar_pos.y + avatar_size), IM_COL32(120, 170, 255, 255), 8.0f);
-        draw_list->AddText(ImVec2(avatar_pos.x + (avatar_size - char_size.x)*0.5f, avatar_pos.y + (avatar_size - char_size.y)*0.5f), IM_COL32(255,255,255,255), initial.c_str());
-        draw_list->AddRect(avatar_pos, ImVec2(avatar_pos.x + avatar_size, avatar_pos.y + avatar_size), IM_COL32(255,255,255,100), 8.0f, 0, 1.5f); // 头像高光边
+        // 4. 计算真实气泡边界
+        ImVec2 bubble_size(bubble_width, real_text_size.y + padding.y * 2);
+        ImVec2 bubble_max = ImVec2(bubble_pos.x + bubble_size.x, bubble_pos.y + bubble_size.y);
         
-    } else { // ========== NPC（靠左，白粉系） ==========
-        float start_x = cursor_pos.x + item_spacing;
+        // 5. 渲染头像前景
+        ImVec2 avatar_p_min = ImVec2(avatar_center.x - avatar_radius, avatar_center.y - avatar_radius);
+        ImVec2 avatar_p_max = ImVec2(avatar_center.x + avatar_radius, avatar_center.y + avatar_radius);
         
-        // 头像部分
-        ImVec2 avatar_pos = ImVec2(start_x, cursor_pos.y);
-        draw_list->AddRectFilled(ImVec2(avatar_pos.x, avatar_pos.y + 3), ImVec2(avatar_pos.x + avatar_size, avatar_pos.y + avatar_size + 3), shadow_color, 8.0f);
-        draw_list->AddRectFilled(avatar_pos, ImVec2(avatar_pos.x + avatar_size, avatar_pos.y + avatar_size), IM_COL32(255, 170, 190, 255), 8.0f);
-        draw_list->AddText(ImVec2(avatar_pos.x + (avatar_size - char_size.x)*0.5f, avatar_pos.y + (avatar_size - char_size.y)*0.5f), IM_COL32(255,255,255,255), initial.c_str());
-        draw_list->AddRect(avatar_pos, ImVec2(avatar_pos.x + avatar_size, avatar_pos.y + avatar_size), IM_COL32(255,255,255,100), 8.0f, 0, 1.5f);
+        if (avatar_tex) {
+            // 如果有图片，直接画成完美的圆形
+            draw_list->AddImageRounded((void*)(intptr_t)avatar_tex, avatar_p_min, avatar_p_max, 
+                                       ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, avatar_radius);
+        } else {
+            // 兜底：如果没有图片，画默认文字头像
+            draw_list->AddCircleFilled(avatar_center, avatar_radius, IM_COL32(100, 160, 240, 255), 32); 
+            draw_list->AddText(ImVec2(avatar_center.x - char_size.x*0.5f, avatar_center.y - char_size.y*0.5f), IM_COL32(255,255,255,255), initial.c_str());
+        }
 
-        // 气泡部分
-        ImVec2 bubble_pos = ImVec2(avatar_pos.x + avatar_size + item_spacing, cursor_pos.y);
-        draw_list->AddRectFilled(ImVec2(bubble_pos.x + shadow_offset.x, bubble_pos.y + shadow_offset.y), 
-                                 ImVec2(bubble_pos.x + bubble_size.x + shadow_offset.x, bubble_pos.y + bubble_size.y + shadow_offset.y), 
-                                 shadow_color, 12.0f);
-        draw_list->AddRectFilled(bubble_pos, ImVec2(bubble_pos.x + bubble_size.x, bubble_pos.y + bubble_size.y), IM_COL32(255, 255, 255, 245), 12.0f); 
-        // 给NPC白色气泡加一层非常淡的灰色描边，防止在白背景中隐形
-        draw_list->AddRect(bubble_pos, ImVec2(bubble_pos.x + bubble_size.x, bubble_pos.y + bubble_size.y), IM_COL32(230, 230, 235, 255), 12.0f, 0, 1.0f);
+        // 外圈高光描边保留，增加质感
+        draw_list->AddCircle(avatar_center, avatar_radius, IM_COL32(255,255,255,150), 32, 2.0f);
+
+        // 6. 切换到底层渲染气泡和阴影
+        draw_list->ChannelsSetCurrent(0); 
+        for (int i = 0; i < 4; ++i) {
+            draw_list->AddRectFilled(
+                ImVec2(bubble_pos.x - i, bubble_pos.y - i + 4.0f), 
+                ImVec2(bubble_max.x + i, bubble_max.y + i + 4.0f), 
+                IM_COL32(0, 0, 0, 8 - i * 2), bubble_rounding + i);
+        }
+        draw_list->AddRectFilled(bubble_pos, bubble_max, IM_COL32(215, 245, 215, 255), bubble_rounding); 
+        draw_list->AddCircleFilled(ImVec2(avatar_center.x, avatar_center.y + 2), avatar_radius, IM_COL32(0,0,0,30), 32); 
         
-        ImGui::SetCursorScreenPos(ImVec2(bubble_pos.x + padding.x, bubble_pos.y + padding.y));
+        line_height = std::max(bubble_size.y, avatar_size) + item_spacing * 1.5f;
+        
+    } else { // ========== NPC（靠左） ==========
+        // 1. 定位头像与气泡起始点
+        float avatar_x = start_cursor.x + item_spacing + avatar_radius;
+        ImVec2 avatar_center = ImVec2(avatar_x, start_cursor.y + avatar_radius);
+        ImVec2 bubble_pos = ImVec2(avatar_x + avatar_radius + item_spacing, start_cursor.y);
+        text_start_pos = ImVec2(bubble_pos.x + padding.x, bubble_pos.y + padding.y);
+        
+        // 2. 渲染文字
+        ImGui::SetCursorScreenPos(text_start_pos);
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 0.2f, 0.22f, 1.0f));
-        ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + wrap_width);
+        ImGui::PushTextWrapPos(text_start_pos.x + wrap_width);
+        ImGui::BeginGroup();
         ImGui::TextUnformatted(text.c_str());
-        ImGui::PopTextWrapPos(); ImGui::PopStyleColor();
+        ImGui::EndGroup();
+        ImVec2 real_text_size = ImGui::GetItemRectSize();
+        ImGui::PopTextWrapPos(); 
+        ImGui::PopStyleColor();
+        
+        // 3. 动态计算真实边界
+        ImVec2 bubble_size(real_text_size.x + padding.x * 2, real_text_size.y + padding.y * 2);
+        ImVec2 bubble_max = ImVec2(bubble_pos.x + bubble_size.x, bubble_pos.y + bubble_size.y);
+        
+        // 4. 渲染头像前景
+        ImVec2 avatar_p_min = ImVec2(avatar_center.x - avatar_radius, avatar_center.y - avatar_radius);
+        ImVec2 avatar_p_max = ImVec2(avatar_center.x + avatar_radius, avatar_center.y + avatar_radius);
+
+        if (avatar_tex) {
+            draw_list->AddImageRounded((void*)(intptr_t)avatar_tex, avatar_p_min, avatar_p_max, 
+                                       ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, avatar_radius);
+        } else {
+            draw_list->AddCircleFilled(avatar_center, avatar_radius, IM_COL32(250, 160, 180, 255), 32);
+            draw_list->AddText(ImVec2(avatar_center.x - char_size.x*0.5f, avatar_center.y - char_size.y*0.5f), IM_COL32(255,255,255,255), initial.c_str());
+        }
+        draw_list->AddCircle(avatar_center, avatar_radius, IM_COL32(255,255,255,150), 32, 2.0f);
+        // 5. 切换到底层渲染阴影和背景
+        draw_list->ChannelsSetCurrent(0); 
+        for (int i = 0; i < 4; ++i) {
+            draw_list->AddRectFilled(
+                ImVec2(bubble_pos.x - i, bubble_pos.y - i + 4.0f), 
+                ImVec2(bubble_max.x + i, bubble_max.y + i + 4.0f), 
+                IM_COL32(0, 0, 0, 8 - i * 2), bubble_rounding + i);
+        }
+        draw_list->AddRectFilled(bubble_pos, bubble_max, IM_COL32(255, 255, 255, 255), bubble_rounding); 
+        draw_list->AddRect(bubble_pos, bubble_max, IM_COL32(235, 235, 240, 255), bubble_rounding, 0, 1.0f);
+        draw_list->AddCircleFilled(ImVec2(avatar_center.x, avatar_center.y + 2), avatar_radius, IM_COL32(0,0,0,30), 32);
+        
+        line_height = std::max(bubble_size.y, avatar_size) + item_spacing * 1.5f;
     }
     
-    ImGui::SetCursorScreenPos(ImVec2(cursor_pos.x, cursor_pos.y + line_height));
+    // 合并图层，推进整体界面游标
+    draw_list->ChannelsMerge();
+    ImGui::SetCursorScreenPos(ImVec2(start_cursor.x, start_cursor.y + line_height));
     ImGui::Dummy(ImVec2(0.0f, 0.0f)); 
 }
 
@@ -430,26 +516,44 @@ void GameManager::renderUI() {
     ImGui::SetNextWindowSize(viewport->WorkSize);
     ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings;
     
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.92f, 0.92f, 0.94f, 1.0f));
     ImGui::Begin("MainGameWindow", nullptr, window_flags);
+    ImGui::PopStyleColor();
 
-    // ================= 左侧导航栏 =================
-    float nav_width = 160.0f;
-    ImGui::BeginChild("NavBar", ImVec2(nav_width, 0), true);
+    // ================= 现代化侧边栏 =================
+    float nav_width = 180.0f;
+    ImGui::BeginChild("NavBar", ImVec2(nav_width, 0), true, ImGuiWindowFlags_NoScrollbar);
     
-    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 10.0f);
-    ImGui::TextColored(ImVec4(0.96f, 0.54f, 0.60f, 1.0f), "  Dating Sim v2.0");
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
+    ImGui::Spacing(); ImGui::Spacing();
+    // 渐变感/设计感的 LOGO
+    ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]); // 如果你有大号字体可以在这里切换
+    ImGui::TextColored(ImVec4(0.96f, 0.54f, 0.64f, 1.0f), "  AI DATING SIM");
+    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "  VER 2.0");
+    ImGui::PopFont();
+    
+    ImGui::Spacing(); ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing(); ImGui::Spacing();
 
-    ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, ImVec2(0.1f, 0.5f));
-    if (ImGui::Selectable("聊天 (Chat)", currentTab == UINavTab::CHAT, 0, ImVec2(0, 45))) currentTab = UINavTab::CHAT;
-    if (ImGui::Selectable("档案 (Profile)", currentTab == UINavTab::PROFILE, 0, ImVec2(0, 45))) currentTab = UINavTab::PROFILE;
-    if (ImGui::Selectable("系统 (System)", currentTab == UINavTab::SYSTEM, 0, ImVec2(0, 45))) {
+    // 辅助函数：绘制带左侧指示条的高级侧边栏按钮
+    auto DrawNavButton = [](const char* label, bool selected) -> bool {
+        ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, ImVec2(0.2f, 0.5f));
+        ImVec2 pos = ImGui::GetCursorScreenPos();
+        bool clicked = ImGui::Selectable(label, selected, 0, ImVec2(0, 50));
+        if (selected) {
+            // 在选中项左侧画一条粉色强调线
+            ImGui::GetWindowDrawList()->AddRectFilled(
+                ImVec2(pos.x, pos.y + 10), ImVec2(pos.x + 4, pos.y + 40), 
+                IM_COL32(245, 138, 163, 255), 2.0f);
+        }
+        ImGui::PopStyleVar();
+        return clicked;
+    };
+
+    if (DrawNavButton("聊天 (Chat)", currentTab == UINavTab::CHAT)) currentTab = UINavTab::CHAT;
+    if (DrawNavButton("档案 (Profile)", currentTab == UINavTab::PROFILE)) currentTab = UINavTab::PROFILE;
+    if (DrawNavButton("系统 (System)", currentTab == UINavTab::SYSTEM)) {
         currentTab = UINavTab::SYSTEM;
-        scanSaveFiles(); // 进入系统页时刷新存档
+        scanSaveFiles();
     }
-    ImGui::PopStyleVar();
 
     ImGui::EndChild();
     ImGui::SameLine();
@@ -458,23 +562,27 @@ void GameManager::renderUI() {
     ImGui::BeginChild("MainContent", ImVec2(0, 0), false);
 
     if (currentTab == UINavTab::CHAT) {
-        // --- 聊天 Header ---
-        ImGui::BeginChild("ChatHeader", ImVec2(0, 50), true);
+        // --- 聊天 Header (玻璃拟物风) ---
+        ImGui::BeginChild("ChatHeader", ImVec2(0, 60), true);
         std::string npcNameDisplay = activeNPC ? activeNPC->getName() : "未邂逅";
         std::string timeStr = (currentTime == TimeOfDay::MORNING) ? "清晨" : (currentTime == TimeOfDay::NOON) ? "午后" : "深夜";
         
-        ImGui::SetCursorPos(ImVec2(15, 15));
-        ImGui::Text("正在与 %s 聊天  |  时间环境: %s", npcNameDisplay.c_str(), timeStr.c_str());
+        ImGui::SetCursorPos(ImVec2(20, 20));
+        ImGui::TextDisabled("与");
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.2f, 0.2f, 0.2f, 1.0f), "%s", npcNameDisplay.c_str());
+        ImGui::SameLine();
+        ImGui::TextDisabled("交谈中  ·  %s", timeStr.c_str());
         
         if (isWaitingForReply) { 
-            ImGui::SameLine(ImGui::GetWindowWidth() - 160); 
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "对方正在思索回复..."); 
+            ImGui::SameLine(ImGui::GetWindowWidth() - 180); 
+            ImGui::TextColored(ImVec4(0.96f, 0.54f, 0.64f, 1.0f), "对方正在输入中..."); 
         }
         ImGui::EndChild();
 
         // --- 聊天主体区 ---
         // 动态计算底部输入区高度 (如果发生事件，需要更多空间放置选项按钮)
-        float input_area_height = isEventActive ? ImGui::GetFrameHeightWithSpacing() * 5.0f : 60.0f;
+        float input_area_height = isEventActive ? 180.0f : 80.0f; // 动态输入框高度
         
         ImGui::BeginChild("ChatHistoryArea", ImVec2(0, -input_area_height), false, ImGuiWindowFlags_NoScrollWithMouse);
         
@@ -493,15 +601,23 @@ void GameManager::renderUI() {
         
         for (const auto& chat : uiChatHistory) {
             int type = 0;
+            ImTextureID tex = 0;
+
             if (chat.first == mainPlayer.getName()) {
                 type = 1; // 玩家
+                if (playerImageLoader.isLoaded()) {
+                    tex = (ImTextureID)(intptr_t)playerImageLoader.getTextureID();
+                }
             } else if (chat.first == "[暗中洞察]") {
                 type = 3; // 洞察
             } else if (chat.first != "系统" && chat.first.find("GM") == std::string::npos) {
                 type = 2; // NPC
+                if (npcImageLoader.isLoaded()) {
+                    tex = (ImTextureID)(intptr_t)npcImageLoader.getTextureID();
+                }
             }
             
-            drawChatBubble(chat.first, chat.second, type);
+            drawChatBubble(chat.first, chat.second, type, tex);
         }
 
         if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) ImGui::SetScrollHereY(1.0f);
@@ -509,11 +625,13 @@ void GameManager::renderUI() {
         ImGui::EndChild();
 
         // --- 聊天底部输入 / 事件检定区 ---
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 0.0f); // 输入区无圆角贴底
         ImGui::BeginChild("ChatInput", ImVec2(0, 0), true);
-        
+        ImGui::PopStyleVar();
+
         if (isEventActive) {
-            ImGui::SetCursorPos(ImVec2(10, 10));
-            ImGui::TextColored(ImVec4(0.9f, 0.4f, 0.4f, 1.0f), "【突发事件！请做出选择】");
+            ImGui::SetCursorPos(ImVec2(15, 15));
+            ImGui::TextColored(ImVec4(0.9f, 0.3f, 0.3f, 1.0f), "⚠️ 命运抉择时刻");
             ImGui::Spacing();
             
             // 完全保留原有的 D100 检定核心逻辑
@@ -563,20 +681,22 @@ void GameManager::renderUI() {
             }
         } else {
             // 普通对话输入区
-            ImGui::SetCursorPos(ImVec2(10, 10));
+            ImGui::SetCursorPos(ImVec2(15, 15));
             static char inputBuf[512] = ""; 
-            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 90);
+            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 140);
             
-            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 10));
-            bool pressed = ImGui::InputText("##ChatInput", inputBuf, IM_ARRAYSIZE(inputBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+            // 放大输入框内边距
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(16, 12));
+            bool pressed = ImGui::InputTextWithHint("##ChatInput", "输入你想说的话...", inputBuf, IM_ARRAYSIZE(inputBuf), ImGuiInputTextFlags_EnterReturnsTrue);
             ImGui::PopStyleVar();
             
-            ImGui::SameLine();
+            ImGui::SameLine(0, 15);
             
             bool disableInput = isWaitingForReply || isGeneratingTransition || activeNPC == nullptr || !hasEncounterStarted;
             if (disableInput) ImGui::BeginDisabled();
             
-            if (ImGui::Button("发送", ImVec2(75, 40)) || (pressed && !disableInput)) {
+            // 现代化大按钮
+            if (ImGui::Button("发送 (Enter)", ImVec2(120, 42)) || (pressed && !disableInput)) {
                 if (strlen(inputBuf) > 0) {
                     std::string userText = inputBuf; 
                     uiChatHistory.push_back({mainPlayer.getName(), userText}); 
@@ -604,17 +724,26 @@ void GameManager::renderUI() {
 
     } 
     else if (currentTab == UINavTab::PROFILE) {
-        // ================= 档案页面 =================
-        ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.8f, 0.6f, 0.8f, 1.0f), " 【世界与灵魂档案】");
-        ImGui::Separator();
-        ImGui::Spacing();
+        // ================= 档案页面现代化 =================
+        ImGui::Spacing(); ImGui::Spacing();
+        ImGui::Indent(10.0f);
+        ImGui::TextDisabled("DATABASE");
+        ImGui::TextUnformatted("世界与灵魂档案");
+        ImGui::Unindent(10.0f);
+        ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
         
-        // 左半边放立绘
-        ImGui::BeginChild("ProfileLeft", ImVec2(ImGui::GetContentRegionAvail().x * 0.35f, 0), true);
+        ImGui::BeginChild("ProfileContent", ImVec2(0, 0), false);
+        
+        // 使用两列布局
+        ImGui::Columns(2, "ProfileColumns", false);
+        ImGui::SetColumnWidth(0, ImGui::GetWindowWidth() * 0.40f);
+
+        // --- 左侧：立绘卡片 ---
+        ImGui::BeginChild("PortraitCard", ImVec2(0, 500), true);
         if (isGeneratingPortrait) {
-            ImGui::SetCursorPosY(ImGui::GetWindowHeight() * 0.45f);
-            ImGui::TextDisabled("  ... AI 画师描绘中 ...");
+            ImGui::SetCursorPosY(200);
+            ImGui::SetCursorPosX((ImGui::GetWindowWidth() - ImGui::CalcTextSize("AI 画师描绘中...").x) * 0.5f);
+            ImGui::TextDisabled("AI 画师描绘中...");
         } else if (npcImageLoader.isLoaded()) {
             ImVec2 availSize = ImGui::GetContentRegionAvail();
             float aspect = (float)npcImageLoader.getWidth() / (float)npcImageLoader.getHeight();
@@ -626,49 +755,77 @@ void GameManager::renderUI() {
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offsetX);
             ImGui::Image((void*)(intptr_t)npcImageLoader.getTextureID(), imageSize);
         } else {
-            ImGui::SetCursorPosY(ImGui::GetWindowHeight() * 0.45f);
-            ImGui::Text("暂无立绘数据");
+             ImGui::SetCursorPosY(200);
+             ImGui::SetCursorPosX((ImGui::GetWindowWidth() - ImGui::CalcTextSize("暂无立绘数据").x) * 0.5f);
+             ImGui::TextDisabled("暂无立绘数据");
         }
         ImGui::EndChild();
         
-        ImGui::SameLine();
+        ImGui::NextColumn();
+
+        // --- 右侧：数据面板 ---
+        ImGui::BeginChild("DataPanel", ImVec2(0, 0), true);
         
-        // 右半边放详细情报
-        ImGui::BeginChild("ProfileRight", ImVec2(0, 0), false);
-        
-        ImGui::TextColored(ImVec4(0.3f, 0.7f, 0.9f, 1.0f), "【主角信息】: %s", mainPlayer.getName().c_str());
-        ImGui::TextWrapped("【身世】: %s", mainPlayer.getBackstory().c_str());
-        ImGui::Spacing();
-        if (isGeneratingPlayer) {
-            ImGui::BeginDisabled(); ImGui::Button("重塑中...", ImVec2(120, 35)); ImGui::EndDisabled();
-        } else {
-            if (ImGui::Button("重塑人生", ImVec2(120, 35))) { isGeneratingPlayer = true; futurePlayerProfile = ProfileGenerator::generatePlayerProfileAsync(std::string(worldSettingBuf)); }
+        ImGui::TextColored(ImVec4(0.4f, 0.6f, 0.9f, 1.0f), "■ 主角情报");
+        if (isGeneratingPlayerPortrait) {
+            ImGui::TextDisabled("容貌重构中...");
+        } else if (playerImageLoader.isLoaded()) {
+            ImVec2 p = ImGui::GetCursorScreenPos();
+            float radius = 20.0f;
+            ImGui::GetWindowDrawList()->AddImageRounded(
+                (void*)(intptr_t)playerImageLoader.getTextureID(), 
+                p, ImVec2(p.x + radius * 2, p.y + radius * 2), 
+                ImVec2(0, 0), ImVec2(1, 0.6f), IM_COL32_WHITE, radius);
+            ImGui::Dummy(ImVec2(radius * 2, radius * 2)); // 占位
         }
-        
+        ImGui::Text("代号: %s", mainPlayer.getName().c_str());
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+        ImGui::TextWrapped("背景: %s", mainPlayer.getBackstory().c_str());
+        ImGui::PopStyleColor();
+        ImGui::Spacing();
+        // 重塑人生按钮逻辑
+        if (isGeneratingPlayer) {
+            // 如果已经在生成中了，按钮变灰且不可点击
+            ImGui::BeginDisabled(); 
+            ImGui::Button("重构中...", ImVec2(120, 36)); 
+            ImGui::EndDisabled();
+        } else {
+            // 如果当前空闲，允许点击
+            if (ImGui::Button("重塑人生", ImVec2(120, 36))) { 
+                isGeneratingPlayer = true; 
+                // 调用大模型异步生成主角档案，传入当前的世界观设定
+                futurePlayerProfile = ProfileGenerator::generatePlayerProfileAsync(std::string(worldSettingBuf)); 
+            }
+        }
         ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
         
-        ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.6f, 1.0f), "【邂逅对象】: %s", currentNPC.is_generated ? currentNPC.name.c_str() : "无");
+        ImGui::TextColored(ImVec4(0.96f, 0.54f, 0.64f, 1.0f), "■ 邂逅对象");
+        ImGui::Text("姓名: %s", currentNPC.is_generated ? currentNPC.name.c_str() : "未探明");
         if (currentNPC.is_generated) {
-            ImGui::Text("好感度: %d  |  初始态度: %s", currentNPC.initial_affection, currentNPC.initial_attitude.c_str());
-            ImGui::TextWrapped("【外貌】: %s", currentNPC.appearance.c_str());
-            ImGui::TextWrapped("【性格】: %s", currentNPC.personality_core.c_str());
-            ImGui::TextWrapped("【执念】: %s", currentNPC.hidden_trauma.c_str());
+            ImGui::Text("好感度阶层:"); ImGui::SameLine();
+            ImGui::ProgressBar(currentNPC.initial_affection / 100.0f, ImVec2(150, 20));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+            ImGui::TextWrapped("性格: %s", currentNPC.personality_core.c_str());
+            ImGui::TextWrapped("执念: %s", currentNPC.hidden_trauma.c_str());
+            ImGui::PopStyleColor();
         }
         ImGui::Spacing();
         
         if (isGeneratingNPC) {
-            ImGui::BeginDisabled(); ImGui::Button("寻找中...", ImVec2(120, 35)); ImGui::EndDisabled();
+            ImGui::BeginDisabled(); ImGui::Button("寻找中...", ImVec2(120, 36)); ImGui::EndDisabled();
         } else {
-            if (ImGui::Button("寻找新角色", ImVec2(120, 35))) { isGeneratingNPC = true; futureProfile = ProfileGenerator::generateRandomProfileAsync(std::string(worldSettingBuf)); }
+            if (ImGui::Button("寻找新角色", ImVec2(120, 36))) { 
+                isGeneratingNPC = true; 
+                futureProfile = ProfileGenerator::generateRandomProfileAsync(std::string(worldSettingBuf)); 
+            }
         }
-        ImGui::SameLine();
         
         if (activeNPC != nullptr && !hasEncounterStarted) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.96f, 0.54f, 0.60f, 1.0f)); 
             if (isGeneratingEncounter) {
-                ImGui::BeginDisabled(); ImGui::Button("靠近中...", ImVec2(120, 35)); ImGui::EndDisabled();
+                ImGui::BeginDisabled(); ImGui::Button("靠近中...", ImVec2(120, 36)); ImGui::EndDisabled();
             } else {
-                if (ImGui::Button("开始邂逅", ImVec2(120, 35))) {
+                if (ImGui::Button("开始邂逅", ImVec2(120, 36))) {
                     isGeneratingEncounter = true;
                     futureEncounter = ProfileGenerator::generateEncounterAsync(std::string(worldSettingBuf), mainPlayer, currentNPC);
                 }
@@ -678,21 +835,21 @@ void GameManager::renderUI() {
 
         ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
         
-        ImGui::Text("【当前世界观设定】:");
+        ImGui::TextColored(ImVec4(0.6f, 0.8f, 0.6f, 1.0f), "■ 世界线构造");
         ImGui::InputTextMultiline("##WorldSetting", worldSettingBuf, IM_ARRAYSIZE(worldSettingBuf), ImVec2(-1, 80));
         ImGui::Spacing();
         if (isGeneratingWorld) {
-            ImGui::BeginDisabled(); ImGui::Button("重构中...", ImVec2(120, 35)); ImGui::EndDisabled();
+            ImGui::BeginDisabled(); ImGui::Button("重构中...", ImVec2(120, 36)); ImGui::EndDisabled();
         } else {
-            if (ImGui::Button("AI重构世界", ImVec2(120, 35))) { 
+            if (ImGui::Button("AI重构世界", ImVec2(120, 36))) { 
                 isGeneratingWorld = true; 
                 futureWorldSetting = ProfileGenerator::generateRandomWorldSettingAsync(); 
             }
-        }
-        
-        ImGui::EndChild(); // End ProfileRight
-        
-    } 
+        } 
+        ImGui::EndChild();
+        ImGui::Columns(1);
+        ImGui::EndChild();
+    }
     else if (currentTab == UINavTab::SYSTEM) {
         // ================= 系统页面 =================
         ImGui::Spacing();
@@ -925,6 +1082,10 @@ bool GameManager::loadGame(const std::string& filename) {
     // 2. 恢复玩家本体
     if (saveData.contains("player")) {
         mainPlayer.fromJson(saveData["player"]);
+
+        if (!mainPlayer.getPortraitPath().empty()) {
+            playerImageLoader.LoadFromFile(mainPlayer.getPortraitPath());
+        }
     }
 
     // 3. 恢复当前的 NPC 和跨次元视觉影像

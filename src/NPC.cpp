@@ -276,7 +276,13 @@ std::future<bool> NPC::generatePortraitAsync() {
                 
                 auto dl_res = dl_cli.Get(path);
                 if (dl_res && dl_res->status == 200) {
-                    std::string savePath = "saves/portrait_" + name + "_" + std::to_string(std::time(nullptr)) + ".png";
+                    auto t = std::time(nullptr);
+                    struct tm tm_info;
+                    localtime_s(&tm_info, &t);
+                    char timeBuf[128];
+                    std::strftime(timeBuf, sizeof(timeBuf), "%Y%m%d_%H%M%S", &tm_info);
+                    
+                    std::string savePath = "saves/npc_avatar_" + std::string(timeBuf) + ".png";
                     std::ofstream file(savePath, std::ios::binary);
                     file.write(dl_res->body.c_str(), dl_res->body.size());
                     file.close();

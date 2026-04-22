@@ -724,7 +724,7 @@ void GameManager::renderUI() {
 
     } 
     else if (currentTab == UINavTab::PROFILE) {
-        // ================= 档案页面现代化 =================
+        // ================= 档案页面现代化 (纵向卡片布局) =================
         ImGui::Spacing(); ImGui::Spacing();
         ImGui::Indent(10.0f);
         ImGui::TextDisabled("DATABASE");
@@ -733,121 +733,172 @@ void GameManager::renderUI() {
         ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
         
         ImGui::BeginChild("ProfileContent", ImVec2(0, 0), false);
-        
-        // 使用两列布局
-        ImGui::Columns(2, "ProfileColumns", false);
-        ImGui::SetColumnWidth(0, ImGui::GetWindowWidth() * 0.40f);
 
-        // --- 左侧：立绘卡片 ---
-        ImGui::BeginChild("PortraitCard", ImVec2(0, 500), true);
-        if (isGeneratingPortrait) {
-            ImGui::SetCursorPosY(200);
-            ImGui::SetCursorPosX((ImGui::GetWindowWidth() - ImGui::CalcTextSize("AI 画师描绘中...").x) * 0.5f);
-            ImGui::TextDisabled("AI 画师描绘中...");
-        } else if (npcImageLoader.isLoaded()) {
-            ImVec2 availSize = ImGui::GetContentRegionAvail();
-            float aspect = (float)npcImageLoader.getWidth() / (float)npcImageLoader.getHeight();
-            ImVec2 imageSize;
-            if (availSize.x / aspect <= availSize.y) imageSize = ImVec2(availSize.x, availSize.x / aspect);
-            else imageSize = ImVec2(availSize.y * aspect, availSize.y);
-            
-            float offsetX = (availSize.x - imageSize.x) * 0.5f;
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offsetX);
-            ImGui::Image((void*)(intptr_t)npcImageLoader.getTextureID(), imageSize);
-        } else {
-             ImGui::SetCursorPosY(200);
-             ImGui::SetCursorPosX((ImGui::GetWindowWidth() - ImGui::CalcTextSize("暂无立绘数据").x) * 0.5f);
-             ImGui::TextDisabled("暂无立绘数据");
+        float availWidth = ImGui::GetContentRegionAvail().x;
+        float rightColWrapWidth = availWidth - 220.0f;
+
+        // ---------------------------------------------------------
+        // 1. 玩家档案卡片 (上方)
+        // ---------------------------------------------------------
+        float pLeftHeight = 200.0f; // 默认最小高度
+        float pRenderWidth = 180.0f;
+        if (playerImageLoader.isLoaded()) {
+            float aspect = (float)playerImageLoader.getWidth() / (float)playerImageLoader.getHeight();
+            pLeftHeight = pRenderWidth / aspect; // 动态计算等比立绘高度
         }
-        ImGui::EndChild();
         
+        // 动态预判右侧文字高度
+        std::string pBackstory = "背景故事: " + mainPlayer.getBackstory();
+        float pTextHeight = ImGui::CalcTextSize(pBackstory.c_str(), NULL, false, rightColWrapWidth).y;
+        float pRightHeight = 120.0f + pTextHeight; // 基础元素高度(标题+按钮+行距) + 动态文字高度
+        
+        // 卡片高度取两边最高的那个，再额外加 40px 的上下内边距
+        float playerCardHeight = std::max(pLeftHeight, pRightHeight) + 40.0f; 
+
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.94f, 0.96f, 1.0f, 0.4f)); 
+        // 添加 ImGuiWindowFlags_NoScrollbar 彻底干掉丑陋的内部滚动条
+        ImGui::BeginChild("PlayerProfileCard", ImVec2(0, playerCardHeight), true, ImGuiWindowFlags_NoScrollbar);
+        
+        ImGui::Columns(2, "PlayerSplit", false);
+        ImGui::SetColumnWidth(0, 200.0f); // 固定左侧宽度
+
+        // --- 玩家立绘 (左侧) ---
+        if (isGeneratingPlayerPortrait) {
+            ImGui::TextDisabled("\n\n\n  容貌重构中...");
+        } else if (playerImageLoader.isLoaded()) {
+            float offsetY = (playerCardHeight - pLeftHeight) * 0.5f - 10.0f;
+            if (offsetY > 0) ImGui::SetCursorPosY(ImGui::GetCursorPosY() + offsetY);
+            ImGui::Image((void*)(intptr_t)playerImageLoader.getTextureID(), ImVec2(pRenderWidth, pLeftHeight));
+        } else {
+            ImGui::TextDisabled("\n\n\n  暂无主角立绘");
+        }
+
         ImGui::NextColumn();
 
-        // --- 右侧：数据面板 ---
-        ImGui::BeginChild("DataPanel", ImVec2(0, 0), true);
-        
-        ImGui::TextColored(ImVec4(0.4f, 0.6f, 0.9f, 1.0f), "■ 主角情报");
-        if (isGeneratingPlayerPortrait) {
-            ImGui::TextDisabled("容貌重构中...");
-        } else if (playerImageLoader.isLoaded()) {
-            ImVec2 p = ImGui::GetCursorScreenPos();
-            float radius = 20.0f;
-            ImGui::GetWindowDrawList()->AddImageRounded(
-                (void*)(intptr_t)playerImageLoader.getTextureID(), 
-                p, ImVec2(p.x + radius * 2, p.y + radius * 2), 
-                ImVec2(0, 0), ImVec2(1, 0.6f), IM_COL32_WHITE, radius);
-            ImGui::Dummy(ImVec2(radius * 2, radius * 2)); // 占位
-        }
+        // --- 玩家资料 (右侧) ---
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 15.0f);
+        ImGui::TextColored(ImVec4(0.4f, 0.6f, 0.9f, 1.0f), "■ 主角情报 (Player)");
+        ImGui::Spacing();
         ImGui::Text("代号: %s", mainPlayer.getName().c_str());
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
-        ImGui::TextWrapped("背景: %s", mainPlayer.getBackstory().c_str());
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + rightColWrapWidth);
+        ImGui::TextWrapped("背景故事: %s", mainPlayer.getBackstory().c_str());
         ImGui::PopStyleColor();
         ImGui::Spacing();
-        // 重塑人生按钮逻辑
+        
         if (isGeneratingPlayer) {
-            // 如果已经在生成中了，按钮变灰且不可点击
-            ImGui::BeginDisabled(); 
-            ImGui::Button("重构中...", ImVec2(120, 36)); 
-            ImGui::EndDisabled();
+            ImGui::BeginDisabled(); ImGui::Button("正在重构人生...", ImVec2(140, 32)); ImGui::EndDisabled();
         } else {
-            // 如果当前空闲，允许点击
-            if (ImGui::Button("重塑人生", ImVec2(120, 36))) { 
+            if (ImGui::Button("重塑人生", ImVec2(120, 32))) { 
                 isGeneratingPlayer = true; 
-                // 调用大模型异步生成主角档案，传入当前的世界观设定
                 futurePlayerProfile = ProfileGenerator::generatePlayerProfileAsync(std::string(worldSettingBuf)); 
             }
         }
+        ImGui::Columns(1);
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+
         ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+
+        // ---------------------------------------------------------
+        // 2. NPC 档案卡片 (下方)
+        // ---------------------------------------------------------
+        float nLeftHeight = 200.0f;
+        float nRenderWidth = 180.0f;
+        if (npcImageLoader.isLoaded()) {
+            float aspect = (float)npcImageLoader.getWidth() / (float)npcImageLoader.getHeight();
+            nLeftHeight = nRenderWidth / aspect;
+        }
+
+        float nRightHeight = 100.0f; 
+        std::string nCore = "核心性格: " + currentNPC.personality_core;
+        std::string nTrauma = "隐藏执念: " + currentNPC.hidden_trauma;
         
-        ImGui::TextColored(ImVec4(0.96f, 0.54f, 0.64f, 1.0f), "■ 邂逅对象");
-        ImGui::Text("姓名: %s", currentNPC.is_generated ? currentNPC.name.c_str() : "未探明");
         if (currentNPC.is_generated) {
-            ImGui::Text("好感度阶层:"); ImGui::SameLine();
-            ImGui::ProgressBar(currentNPC.initial_affection / 100.0f, ImVec2(150, 20));
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
-            ImGui::TextWrapped("性格: %s", currentNPC.personality_core.c_str());
-            ImGui::TextWrapped("执念: %s", currentNPC.hidden_trauma.c_str());
+            nRightHeight += 50.0f; // 进度条预留高度
+            // 精确计算 AI 生成的变长文本所需的高度
+            nRightHeight += ImGui::CalcTextSize(nCore.c_str(), NULL, false, rightColWrapWidth).y;
+            nRightHeight += ImGui::CalcTextSize(nTrauma.c_str(), NULL, false, rightColWrapWidth).y;
+        }
+        
+        float npcCardHeight = std::max(nLeftHeight, nRightHeight) + 50.0f;
+
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(1.0f, 0.94f, 0.96f, 0.4f)); 
+        ImGui::BeginChild("NPCProfileCard", ImVec2(0, npcCardHeight), true, ImGuiWindowFlags_NoScrollbar);
+        
+        ImGui::Columns(2, "NPCSplit", false);
+        ImGui::SetColumnWidth(0, 200.0f);
+
+        // --- NPC 立绘 (左侧) ---
+        if (isGeneratingPortrait) {
+            ImGui::TextDisabled("\n\n\n  画师描绘中...");
+        } else if (npcImageLoader.isLoaded()) {
+            float offsetY = (npcCardHeight - nLeftHeight) * 0.5f - 10.0f;
+            if (offsetY > 0) ImGui::SetCursorPosY(ImGui::GetCursorPosY() + offsetY);
+            ImGui::Image((void*)(intptr_t)npcImageLoader.getTextureID(), ImVec2(nRenderWidth, nLeftHeight));
+        } else {
+            ImGui::TextDisabled("\n\n\n  暂无角色立绘");
+        }
+
+        ImGui::NextColumn();
+
+        // --- NPC 资料 (右侧) ---
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 15.0f);
+        ImGui::TextColored(ImVec4(0.96f, 0.54f, 0.64f, 1.0f), "■ 邂逅对象 (NPC)");
+        ImGui::Spacing();
+        ImGui::Text("姓名: %s", currentNPC.is_generated ? currentNPC.name.c_str() : "未知");
+        
+        if (currentNPC.is_generated) {
+            ImGui::Text("好感度:"); ImGui::SameLine();
+            ImGui::ProgressBar(currentNPC.initial_affection / 100.0f, ImVec2(150, 18));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
+            ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + rightColWrapWidth);
+            ImGui::TextWrapped("核心性格: %s", currentNPC.personality_core.c_str());
+            ImGui::TextWrapped("隐藏执念: %s", currentNPC.hidden_trauma.c_str());
+            ImGui::PopTextWrapPos();
             ImGui::PopStyleColor();
         }
-        ImGui::Spacing();
         
+        ImGui::Spacing();
         if (isGeneratingNPC) {
-            ImGui::BeginDisabled(); ImGui::Button("寻找中...", ImVec2(120, 36)); ImGui::EndDisabled();
+            ImGui::BeginDisabled(); ImGui::Button("正在寻找...", ImVec2(120, 32)); ImGui::EndDisabled();
         } else {
-            if (ImGui::Button("寻找新角色", ImVec2(120, 36))) { 
+            if (ImGui::Button("邂逅新角色", ImVec2(120, 32))) { 
                 isGeneratingNPC = true; 
                 futureProfile = ProfileGenerator::generateRandomProfileAsync(std::string(worldSettingBuf)); 
             }
         }
         
         if (activeNPC != nullptr && !hasEncounterStarted) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.96f, 0.54f, 0.60f, 1.0f)); 
+            ImGui::SameLine();
             if (isGeneratingEncounter) {
-                ImGui::BeginDisabled(); ImGui::Button("靠近中...", ImVec2(120, 36)); ImGui::EndDisabled();
+                ImGui::BeginDisabled(); ImGui::Button("靠近中...", ImVec2(120, 32)); ImGui::EndDisabled();
             } else {
-                if (ImGui::Button("开始邂逅", ImVec2(120, 36))) {
+                if (ImGui::Button("开始邂逅", ImVec2(120, 32))) {
                     isGeneratingEncounter = true;
                     futureEncounter = ProfileGenerator::generateEncounterAsync(std::string(worldSettingBuf), mainPlayer, currentNPC);
                 }
             }
-            ImGui::PopStyleColor();
         }
+        ImGui::Columns(1);
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
 
+        // ---------------------------------------------------------
+        // 3. 世界观设置 (底部)
+        // ---------------------------------------------------------
         ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-        
-        ImGui::TextColored(ImVec4(0.6f, 0.8f, 0.6f, 1.0f), "■ 世界线构造");
+        ImGui::TextColored(ImVec4(0.6f, 0.8f, 0.6f, 1.0f), "■ 世界线构造 (World Settings)");
         ImGui::InputTextMultiline("##WorldSetting", worldSettingBuf, IM_ARRAYSIZE(worldSettingBuf), ImVec2(-1, 80));
-        ImGui::Spacing();
         if (isGeneratingWorld) {
-            ImGui::BeginDisabled(); ImGui::Button("重构中...", ImVec2(120, 36)); ImGui::EndDisabled();
+            ImGui::BeginDisabled(); ImGui::Button("世界重构中...", ImVec2(140, 32)); ImGui::EndDisabled();
         } else {
-            if (ImGui::Button("AI重构世界", ImVec2(120, 36))) { 
+            if (ImGui::Button("重构世界", ImVec2(140, 32))) { 
                 isGeneratingWorld = true; 
                 futureWorldSetting = ProfileGenerator::generateRandomWorldSettingAsync(); 
             }
         } 
-        ImGui::EndChild();
-        ImGui::Columns(1);
+
         ImGui::EndChild();
     }
     else if (currentTab == UINavTab::SYSTEM) {

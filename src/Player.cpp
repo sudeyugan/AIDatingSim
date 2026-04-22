@@ -1,3 +1,4 @@
+#define CPPHTTPLIB_OPENSSL_SUPPORT
 #include "Player.h"
 #include "ConfigManager.h"
 #include <httplib.h>

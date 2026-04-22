@@ -32,4 +32,8 @@ public:
 
     // 生成初次相遇的场景
     static std::future<std::string> generateEncounterAsync(const std::string& worldSetting, const Player& player, const CharacterProfile& npc);
+    
+    // 生成背景图
+    static std::future<std::string> generateBackgroundAsync(const std::string& sceneDesc);
+
 };

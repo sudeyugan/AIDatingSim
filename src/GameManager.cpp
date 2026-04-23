@@ -333,9 +333,7 @@ void GameManager::checkAsyncTasks() {
 
                 isGeneratingBg = true;
                 futureBg = std::async(std::launch::async, [transitionScene]() {
-                    // TODO: 在这里调用你的 AI 绘画 API，传入 transitionScene 作为 Prompt
-                    // 比如: return ProfileGenerator::generateBackgroundAsync(transitionScene);
-                    return std::string(""); 
+                    return ProfileGenerator::generateBackgroundAsync(transitionScene);
                 });
                 // ====================================================================
             }

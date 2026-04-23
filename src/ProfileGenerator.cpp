@@ -292,3 +292,101 @@ std::future<std::pair<std::string, bool>> ProfileGenerator::generateTransitionSc
         }
     });
 }
+
+std::string ProfileGenerator::generateBackgroundAsync(const std::string& sceneDescription) {
+    std::cout << "[System] 开始根据场景重构世界画面..." << std::endl;
+
+    // ==========================================
+    // 1. 准备 API Key
+    // ==========================================
+    std::string apiKey = ConfigManager::getInstance().getImageApiKey();
+    // 清理可能由于读取配置带来的多余换行符
+    apiKey.erase(std::remove(apiKey.begin(), apiKey.end(), '\n'), apiKey.end());
+    apiKey.erase(std::remove(apiKey.begin(), apiKey.end(), '\r'), apiKey.end());
+    apiKey.erase(apiKey.find_last_not_of(" ") + 1);
+
+    if (apiKey.empty()) {
+        std::cerr << "[Error] 生图 API Key 为空，请检查 config.json" << std::endl;
+        return "";
+    }
+
+    // ==========================================
+    // 2. 请求生图 API 
+    // ==========================================
+    // 构造背景的专属提示词
+    std::string prompt = "高质量动画截图，日系流行动漫番剧风格（Anime style）。高质量平涂与微光效结合，精细的描线。强烈的镜头感与氛围光影（Cinematic lighting, bloom effect）。这是一个背景空景，绝对不要出现任何人物！场景描述：" + sceneDescription;
+
+    json requestBody = {
+        {"model", "cogview-4-250304"},
+        {"prompt", prompt}
+    };
+
+    httplib::Client cli("https://open.bigmodel.cn"); 
+    cli.enable_server_certificate_verification(false);
+    cli.set_read_timeout(120, 0); // 生图比较慢，给足 120 秒等待
+
+    httplib::Headers headers = { 
+        {"Authorization", "Bearer " + apiKey},
+        {"Content-Type", "application/json"}
+    };
+    
+    auto res = cli.Post("/api/paas/v4/images/generations", headers, requestBody.dump(), "application/json");
+
+    if (!res || res->status != 200) {
+        if (res) std::cerr << "智谱生图失败: " << res->body << std::endl;
+        else std::cerr << "网络连接失败/超时" << std::endl;
+        return ""; 
+    }
+
+    try {
+        // ==========================================
+        // 3. 解析 JSON 拿到图片的下载 URL
+        // ==========================================
+        json resJson = json::parse(res->body);
+        std::string imageUrl = resJson["data"][0]["url"];
+
+        // ==========================================
+        // 4. 提取下载链接并保存图片到本地
+        // ==========================================
+        std::regex url_regex(R"(^https?://([^/]+)(/.*)$)");
+        std::smatch url_match_result;
+        
+        if (std::regex_match(imageUrl, url_match_result, url_regex)) {
+            std::string host = url_match_result[1];
+            std::string path = url_match_result[2];
+
+            httplib::Client dl_cli("https://" + host);
+            dl_cli.enable_server_certificate_verification(false);
+            dl_cli.set_read_timeout(60, 0);
+            
+            auto dl_res = dl_cli.Get(path);
+            if (dl_res && dl_res->status == 200) {
+                // 生成带时间戳的唯一文件名
+                auto t = std::time(nullptr);
+                struct tm tm_info;
+#ifdef _WIN32
+                localtime_s(&tm_info, &t); // Windows 安全函数
+#else
+                localtime_r(&t, &tm_info); // Linux/Mac 安全函数
+#endif
+                char timeBuf[128];
+                std::strftime(timeBuf, sizeof(timeBuf), "%Y%m%d_%H%M%S", &tm_info);
+                
+                std::string savePath = "saves/bg_" + std::string(timeBuf) + ".png";
+                
+                // 写入二进制文件
+                std::ofstream file(savePath, std::ios::binary);
+                if (file.is_open()) {
+                    file.write(dl_res->body.c_str(), dl_res->body.size());
+                    file.close();
+                    std::cout << "[System] 场景重构完毕，已保存至: " << savePath << std::endl;
+                    return savePath; // 大功告成，返回图片路径！
+                }
+            }
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "[Error] 解析或保存背景图异常: " << e.what() << std::endl;
+    }
+    
+    return "";
+}

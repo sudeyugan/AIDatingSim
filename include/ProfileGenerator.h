@@ -33,7 +33,9 @@ public:
     // 生成初次相遇的场景
     static std::future<std::string> generateEncounterAsync(const std::string& worldSetting, const Player& player, const CharacterProfile& npc);
     
-    // 生成背景图
-    static std::future<std::string> generateBackgroundAsync(const std::string& sceneDesc);
+    // 生成背景图片的异步任务声明
+    static std::string generateBackgroundAsync(const std::string& sceneDescription);
 
+    // 辅助方法：用于下载网络图片到本地硬盘
+    static std::string downloadImage(const std::string& imageUrl, const std::string& savePath);
 };

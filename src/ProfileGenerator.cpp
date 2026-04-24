@@ -20,9 +20,10 @@ static std::string callLLMAPI(const std::string& prompt, bool jsonMode = false) 
     cli.set_read_timeout(30, 0);
 
     json reqBody = {
-        {"model", "deepseek-chat"},
+        {"model", "deepseek-v4-flash"},
         {"messages", json::array({{{"role", "user"}, {"content", prompt}}})},
-        {"temperature", 0.9}
+        {"reasoning_effort", "high"}, 
+        {"thinking", {{"type", "enabled"}}}
     };
     
     // 强制 JSON 输出模式（如果是支持的 API）
@@ -183,7 +184,7 @@ std::future<GameEvent> ProfileGenerator::generateRandomEventAsync(const std::str
             "请提供 3 个符合当前情境的不同行动选项，并为每个选项指定一个最相关的检测属性（只能是以下英文单词之一: physique, intellect, charm, wealth, empathy, luck）。\n"
             "必须严格输出纯 JSON 格式：\n"
             "{\n"
-            "  \"description\": \"事件或场景的生动描写（注重画面感和氛围，50-100字左右）\",\n"
+            "  \"description\": \"事件或场景的生动描写\",\n"
             "  \"choices\": [\n"
             "    {\"text\": \"强行突破阻碍\", \"stat\": \"physique\"},\n"
             "    {\"text\": \"尝试温柔说服\", \"stat\": \"charm\"},\n"

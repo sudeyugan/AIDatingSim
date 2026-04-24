@@ -113,6 +113,7 @@ uiChatHistory.clear();
     
     // 5. 重置主角状态 (你可以根据 Player 类的构造函数自行调整)
     mainPlayer = Player("主角"); 
+    playerImageLoader.Free();
     
     // 6. 重置所有异步状态机标志位
     hasEncounterStarted = false;
@@ -271,6 +272,12 @@ void GameManager::checkAsyncTasks() {
             if (activeNPC != nullptr) {
                 activeNPC->injectSceneMemory(encounterScene);
             }
+
+            isGeneratingBg = true;
+            // 使用邂逅的开场场景描述作为生图的 Prompt
+            futureBg = std::async(std::launch::async, [encounterScene]() {
+                return ProfileGenerator::generateBackgroundAsync(encounterScene);
+            });
             currentTab = UINavTab::CHAT;
         }
     }

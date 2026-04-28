@@ -18,11 +18,11 @@ public:
 
     // 采用异步方式生成，防止等待 API 返回时卡死整个 GUI 界面
     static std::future<CharacterProfile> generateRandomProfileAsync();
-    static std::future<std::pair<std::string, std::string>> generatePlayerProfileAsync();
+    static std::future<Player> generatePlayerProfileAsync();
 
     //接收世界观参数
     static std::future<CharacterProfile> generateRandomProfileAsync(const std::string& worldSetting);
-    static std::future<std::pair<std::string, std::string>> generatePlayerProfileAsync(const std::string& worldSetting);
+    static std::future<Player> generatePlayerProfileAsync(const std::string& worldSetting);
     
     //随机生成一个极具创意的世界观设定
     static std::future<std::string> generateRandomWorldSettingAsync();

@@ -59,7 +59,7 @@ private:
     std::future<NPCResponse> futureReply;
     bool isWaitingForReply = false;
 
-    std::future<std::pair<std::string, std::string>> futurePlayerProfile;
+    std::future<Player> futurePlayerProfile;
     bool isGeneratingPlayer = false;
 
     std::future<std::string> futureWorldSetting;

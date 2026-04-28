@@ -20,10 +20,9 @@ static std::string callLLMAPI(const std::string& prompt, bool jsonMode = false) 
     cli.set_read_timeout(30, 0);
 
     json reqBody = {
-        {"model", "deepseek-v4-flash"},
-        {"messages", json::array({{{"role", "user"}, {"content", prompt}}})},
-        {"reasoning_effort", "high"}, 
-        {"thinking", {{"type", "enabled"}}}
+        {"model", "deepseek-v4-pro"},
+        {"temperature", 0.85},
+        {"messages", json::array({{{"role", "user"}, {"content", prompt}}})}
     };
     
     // 强制 JSON 输出模式（如果是支持的 API）
@@ -66,7 +65,7 @@ std::future<CharacterProfile> ProfileGenerator::generateRandomProfileAsync(const
 
         std::string prompt = 
             "【角色设定】\n"
-            "你是一位顶级的 Galgame（恋爱模拟游戏）剧本家，擅长塑造细腻、真实、有反差感的女性角色。\n\n"
+            "你是一位顶级的 Galgame（恋爱模拟游戏）剧本家，擅长塑造细腻、真实的女性角色。\n\n"
             "【生成随机熵】： " + getEntropySeed() + "（请利用此随机数确保本次生成的角色与以往不同，最大化多样性）\n\n"
             "【当前世界观设定】\n" + actualWorld + "\n\n"
             "【核心生成规则】\n"
@@ -80,9 +79,9 @@ std::future<CharacterProfile> ProfileGenerator::generateRandomProfileAsync(const
             "必须且只能输出合法的 JSON 格式，字段如下：\n"
             "{\n"
             "  \"name\": \"角色的全名\",\n"
-            "  \"appearance\": \"外貌描写（发型、发色、瞳色、服装细节）\",\n"
-            "  \"personality_core\": \"核心性格特点\",\n"
-            "  \"hidden_trauma\": \"隐藏的烦恼或执念\",\n"
+            "  \"appearance\": \"外貌描写（发型、发色、瞳色、服装细节等等，足够详细具体）\",\n"
+            "  \"personality_core\": \"核心性格特点，足够详细具体\",\n"
+            "  \"hidden_trauma\": \"隐藏的烦恼或执念，足够详细具体\",\n"
             "  \"initial_attitude\": \"对主角的初始态度\",\n"
             "  \"initial_affection\": 0\n"
             "}";
@@ -105,7 +104,7 @@ std::future<CharacterProfile> ProfileGenerator::generateRandomProfileAsync(const
 }
 
 // 生成玩家档案的实现
-std::future<std::pair<std::string, std::string>> ProfileGenerator::generatePlayerProfileAsync(const std::string& worldSetting) {
+std::future<Player> ProfileGenerator::generatePlayerProfileAsync(const std::string& worldSetting) {
     return std::async(std::launch::async, [worldSetting]() {
         std::string actualWorld = worldSetting.empty() ? "现代日常都市，普通的高中校园" : worldSetting;
         
@@ -117,20 +116,43 @@ std::future<std::pair<std::string, std::string>> ProfileGenerator::generatePlaye
             "1. 如果世界观是“现代/普通高中”或为空，主角必须是一个男高中生。背景应当贴近日常（例如：刚搬家过来的转校生、青梅竹马的邻居等）。\n"
             "2. 绝对禁止“龙傲天”、“兵王回归”、“隐藏富二代”等夸张爽文设定。\n"
             "3. 如果是其他明确的世界观（如赛博朋克），请符合该世界观的底层逻辑，设定一个有代入感的角色。\n\n"
+            "4. 【核心任务】：请根据你为主角编写的背景故事，合理分配他的 TRPG 六维属性（0-100）。\n"
+            "   - 体格(physique)、智识(intellect)、魅力(charm)、财力(wealth)、共情(empathy)、运气(luck)。\n"
+            "   - 属性总和请严格控制在 360 - 480 之间，以体现角色的长处与短板，一定要符合故事逻辑！\n\n"
             "【输出格式】\n"
             "必须且只能返回JSON：\n"
             "{\n"
             "  \"name\": \"主角名字\",\n"
-            "  \"backstory\": \"详细阐述主角的背景和身世\"\n"
+            "  \"backstory\": \"详细阐述主角的背景、身世、性格底色以及目前的处境，要求详细阐述，使玩家有足够的了解，有代入感。\"\n"
+            "  \"physique\": 50,\n"
+            "  \"intellect\": 60,\n"
+            "  \"charm\": 55,\n"
+            "  \"wealth\": 40,\n"
+            "  \"empathy\": 70,\n"
+            "  \"luck\": 60\n"
             "}";
 
         std::string response = callLLMAPI(prompt, true);
+        Player newPlayer("主角");
+        
         try {
             json j = json::parse(response);
-            return std::make_pair(j.value("name", "主角"), j.value("backstory", "一个随处可见的普通学生。"));
+            newPlayer = Player(j.value("name", "主角"));
+            newPlayer.setBackstory(j.value("backstory", "一个随处可见的普通学生。"));
+            
+            // 提取 AI 智能分配的六维属性
+            newPlayer.setAttributes(
+                j.value("physique", 50),
+                j.value("intellect", 50),
+                j.value("charm", 50),
+                j.value("wealth", 50),
+                j.value("empathy", 50),
+                j.value("luck", 50)
+            );
         } catch (...) {
-            return std::make_pair(std::string("主角"), std::string("普通的转校生。"));
+            newPlayer.setBackstory("普通的转校生。（量子发生扰动，记忆解析失败）");
         }
+        return newPlayer;
     });
 }
 
@@ -147,7 +169,7 @@ std::future<std::string> ProfileGenerator::generateRandomWorldSettingAsync() {
             "2. 环境与氛围：请加入具体的视觉、听觉或嗅觉描写。\n"
             "3. 核心冲突/日常基调：这个世界的人们在为了什么而活？\n\n"
             "【输出格式】\n"
-            "不要任何废话、不要分点作答。请直接用一段优美、充满沉浸感的散文式描述输出。\n";
+            "不要任何废话、不要分点作答。请直接用一段优美、充满沉浸感的散文式描述输出，要求详细阐述，使玩家有足够的了解，有代入感。\n";
 
         // 注意这里调用时不强制 JSON 模式，因为只要一句话
         std::string response = callLLMAPI(prompt, false);

@@ -86,12 +86,10 @@ NPCResponse NPC::interact(const std::string& playerInput, const Player& player) 
     messages.push_back({{"role", "user"}, {"content", playerInput}});
     
     json requestBody = {
-        {"model", "deepseek-v4-flash"},
+        {"model", "deepseek-v4-pro"},
         {"messages", messages},
-        // Deepseek 支持 response_format，强制其校验 json 输出
-        {"response_format", {{"type", "json_object"}}}, 
-        {"reasoning_effort", "high"},
-        {"thinking", {{"type", "enabled"}}}
+        {"temperature", 0.85},
+        {"response_format", {{"type", "json_object"}}}
     };
 
     std::string bodyStr = requestBody.dump();
@@ -116,12 +114,10 @@ NPCResponse NPC::interact(const std::string& playerInput, const Player& player) 
         }
 
         json requestBody = {
-            {"model", "deepseek-v4-flash"},
+            {"model", "deepseek-v4-pro"},
             {"messages", messages},
-            // Deepseek 支持 response_format，强制其校验 json 输出
-            {"response_format", {{"type", "json_object"}}}, 
-            {"reasoning_effort", "high"},
-            {"thinking", {{"type", "enabled"}}}
+            {"temperature", 0.85},
+            {"response_format", {{"type", "json_object"}}},
         };
 
         std::string bodyStr = requestBody.dump();

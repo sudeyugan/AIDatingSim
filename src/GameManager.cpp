@@ -230,10 +230,8 @@ void GameManager::checkAsyncTasks() {
     // 检查玩家“重置人生”是否完成
     if (isGeneratingPlayer && futurePlayerProfile.valid()) {
         if (futurePlayerProfile.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-            auto newProfile = futurePlayerProfile.get(); 
-            mainPlayer = Player(newProfile.first); 
-            mainPlayer.setBackstory(newProfile.second);
-            isGeneratingPlayer = false;          
+            mainPlayer = futurePlayerProfile.get(); 
+            isGeneratingPlayer = false;         
             
             // ===========触发主角头像生成 ===========
             playerImageLoader.Free(); // 清空老头像
@@ -755,7 +753,7 @@ void GameManager::renderUI() {
         // 动态预判右侧文字高度
         std::string pBackstory = "背景故事: " + mainPlayer.getBackstory();
         float pTextHeight = ImGui::CalcTextSize(pBackstory.c_str(), NULL, false, rightColWrapWidth).y;
-        float pRightHeight = 120.0f + pTextHeight; // 基础元素高度(标题+按钮+行距) + 动态文字高度
+        float pRightHeight = 220.0f + pTextHeight; // 基础元素高度(标题+按钮+行距) + 动态文字高度
         
         // 卡片高度取两边最高的那个，再额外加 40px 的上下内边距
         float playerCardHeight = std::max(pLeftHeight, pRightHeight) + 40.0f; 
@@ -788,7 +786,81 @@ void GameManager::renderUI() {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
         ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + rightColWrapWidth);
         ImGui::TextWrapped("背景故事: %s", mainPlayer.getBackstory().c_str());
+        ImGui::PopTextWrapPos();
         ImGui::PopStyleColor();
+        ImGui::Spacing();
+
+        // ================== 现代表格排版 RPG 属性面板 ==================
+        ImGui::TextColored(ImVec4(0.4f, 0.6f, 0.9f, 1.0f), "■ 基础能力 (Attributes)");
+        ImGui::Spacing();
+        
+        // 辅助函数：根据数值自动计算字母评级
+        auto getRank = [](int val) -> const char* {
+            if (val >= 90) return "S";
+            if (val >= 75) return "A";
+            if (val >= 60) return "B";
+            if (val >= 40) return "C";
+            return "D";
+        };
+
+        // 使用现代的 Table API 代替 Columns，保证完美的两列对齐
+        if (ImGui::BeginTable("PlayerStatsTable", 2, ImGuiTableFlags_None)) {
+            
+            // 核心渲染器
+            auto drawSleekStat = [&](const char* label, int value, ImVec4 color) {
+                ImGui::TextDisabled("%s", label);
+                ImGui::SameLine(65);
+                ImGui::TextColored(color, "%d", value);
+                ImGui::SameLine(100);
+                ImGui::TextColored(ImVec4(color.x, color.y, color.z, 0.7f), "[%s]", getRank(value));
+
+                ImDrawList* draw_list = ImGui::GetWindowDrawList();
+                ImVec2 p = ImGui::GetCursorScreenPos();
+                
+                // 动态获取当前单元格的可用宽度
+                float bar_width = ImGui::GetContentRegionAvail().x * 0.85f; 
+                float bar_height = 6.0f; 
+                float rounding = bar_height * 0.5f; 
+
+                // 画底槽
+                draw_list->AddRectFilled(p, ImVec2(p.x + bar_width, p.y + bar_height), IM_COL32(180, 180, 180, 40), rounding);
+
+                // 画进度
+                float fill_width = bar_width * (std::max(0, std::min(value, 100)) / 100.0f);
+                ImU32 fill_col = ImGui::ColorConvertFloat4ToU32(color);
+                draw_list->AddRectFilled(p, ImVec2(p.x + fill_width, p.y + bar_height), fill_col, rounding);
+
+                // 画高光点
+                if (fill_width > 0) {
+                    draw_list->AddCircleFilled(ImVec2(p.x + fill_width, p.y + bar_height / 2.0f), 3.5f, IM_COL32(255, 255, 255, 220));
+                }
+
+                ImGui::Dummy(ImVec2(bar_width, bar_height + 12.0f)); 
+            };
+
+            // 第一行：体格 (左) | 智识 (右)
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            drawSleekStat("体格", mainPlayer.getPhysique(), ImVec4(0.95f, 0.45f, 0.45f, 1.0f)); 
+            ImGui::TableSetColumnIndex(1);
+            drawSleekStat("智识", mainPlayer.getIntellect(),ImVec4(0.45f, 0.65f, 0.95f, 1.0f));
+
+            // 第二行：魅力 (左) | 财力 (右)
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            drawSleekStat("魅力", mainPlayer.getCharm(),    ImVec4(0.95f, 0.55f, 0.75f, 1.0f));    
+            ImGui::TableSetColumnIndex(1);
+            drawSleekStat("财力", mainPlayer.getWealth(),   ImVec4(0.95f, 0.75f, 0.25f, 1.0f));   
+
+            // 第三行：共情 (左) | 运气 (右)
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            drawSleekStat("共情", mainPlayer.getEmpathy(),  ImVec4(0.35f, 0.85f, 0.65f, 1.0f));  
+            ImGui::TableSetColumnIndex(1);
+            drawSleekStat("运气", mainPlayer.getLuck(),     ImVec4(0.75f, 0.45f, 0.95f, 1.0f));     
+            
+            ImGui::EndTable();
+        }
         ImGui::Spacing();
         
         if (isGeneratingPlayer) {

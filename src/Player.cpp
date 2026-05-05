@@ -5,6 +5,28 @@
 #include <iostream>
 #include <fstream>
 #include <algorithm>
+#include <vector>
+#include <string>
+
+using json = nlohmann::json;
+
+static std::string base64_decode(const std::string &in) {
+    std::string out;
+    std::vector<int> T(256, -1);
+    for (int i = 0; i < 64; i++) T["ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"[i]] = i;
+    int val = 0, valb = -8;
+    for (unsigned char c : in) {
+        if (T[c] == -1) break;
+        val = (val << 6) + T[c];
+        valb += 6;
+        if (valb >= 0) {
+            out.push_back(char((val >> valb) & 0xFF));
+            valb -= 8;
+        }
+    }
+    return out;
+}
+
 // 默认构造函数：所有属性设为 50
 Player::Player() : 
     name("未知"), backstory("一个刚刚来到这座城市的普通旅人，似乎忘记了过去的记忆。"),
@@ -82,68 +104,92 @@ std::future<bool> Player::generatePortraitAsync() {
             apiKey.erase(apiKey.find_last_not_of(" ") + 1);
 
             // 构造生图提示词，加入视觉小说风格限制和防和谐安全词
-            std::string prompt = "【画面中心仅限单人】高质量视觉小说CG，主角单人半身肖像立绘。二次元精美动漫平涂画风。人物背景设定与气质：" + story + "。如果未提及性别，请画成俊朗的青年。强制要求：写实头身比，面部轮廓清晰，绝对不要拼图或多视图设定集。";
+            std::string prompt = 
+            "顶级画师创作的日系视觉小说（Galgame）主角单人半身立绘，Masterpiece。现代高预算动画的宣传图风格（Anime Key Visual），融合细腻的平涂技法与电影级的氛围光影（Cinematic lighting）。"
+            "请根据以下背景设定与气质，精准刻画人物的神态与穿搭：【" + story + "】。"
+            "如果设定中未明确提及性别，请默认绘制成一位气质独特的俊朗青年。"
+            "【极其严格的约束】：\n"
+            "1. 画面必须且只能包含一名角色。\n"
+            "2. 这是一张最终插画，绝对不要画成多角度视图、人物设定集或拼图（No character sheet, no multiple views）。\n"
+            "3. 保持青年向漫画的写实头身比，拒绝幼态。\n"
+            "4. 背景请尽量纯净、简约或大面积留白，以便于提取角色作为游戏立绘。";
 
-            nlohmann::json requestBody = {
-                {"model", "cogview-4-250304"},
-                {"prompt", prompt}
+            json requestBody = {
+                {"model", "openai/gpt-5.4-image-2"}, 
+                {"messages", json::array({{
+                    {"role", "user"},
+                    {"content", prompt}
+                }})},
+                {"modalities", json::array({"image"})} 
             };
 
-            httplib::Client cli("https://open.bigmodel.cn");
-            cli.set_read_timeout(60, 0); 
-            
-            httplib::Headers headers = {
+            httplib::Client cli("https://openrouter.ai");
+            cli.enable_server_certificate_verification(false);
+            cli.set_read_timeout(180, 0); // 生图比较慢，给足 120 秒等待
+
+            httplib::Headers headers = { 
                 {"Authorization", "Bearer " + apiKey},
                 {"Content-Type", "application/json"}
             };
+            // openrouter接口路径
+            auto res = cli.Post("/api/v1/chat/completions", headers, requestBody.dump(), "application/json");
 
-            auto res = cli.Post("/api/paas/v4/images/generations", headers, requestBody.dump(), "application/json");
-
-            if (res && res->status == 200) {
-                nlohmann::json resJson = nlohmann::json::parse(res->body);
-                std::string imageUrl = resJson["data"][0]["url"];
-
-                // 解析 URL 并下载图片
-                size_t protocolEnd = imageUrl.find("://");
-                if (protocolEnd != std::string::npos) {
-                    std::string hostPath = imageUrl.substr(protocolEnd + 3);
-                    size_t pathStart = hostPath.find('/');
-                    std::string host = hostPath.substr(0, pathStart);
-                    std::string path = hostPath.substr(pathStart);
-
-                    httplib::Client dlCli("https://" + host);
-                    dlCli.set_read_timeout(60, 0);
-                    auto imgRes = dlCli.Get(path);
-
-                    if (imgRes && imgRes->status == 200) {
-                        std::filesystem::create_directory("saves");
-                        
-
-                        // 获取当前时间生成时间戳
-                        auto t = std::time(nullptr);
-                        struct tm tm_info;
-                        localtime_s(&tm_info, &t);
-                        char timeBuf[128];
-                        std::strftime(timeBuf, sizeof(timeBuf), "%Y%m%d_%H%M%S", &tm_info);
-                        
-                        // 加上时间戳后缀保留历史头像
-                        std::string savePath = "saves/player_avatar_" + std::string(timeBuf) + ".png"; 
-                        
-                        std::ofstream out(savePath, std::ios::binary);
-                        out.write(imgRes->body.c_str(), imgRes->body.size());
-                        out.close();
-                        
-                        // 下载成功，写入类属性
-                        this->portraitPath = savePath;
-                        return true; 
-                    }
-                }
-            } else {
-                std::cerr << "主角生图失败，状态码: " << (res ? std::to_string(res->status) : "超时") << std::endl;
+            if (!res || res->status != 200) {
+                if (res) std::cerr << "OpenRouter生图失败: 状态码 " << res->status << " - " << res->body << std::endl;
+                else std::cerr << "OpenRouter网络连接失败/超时" << std::endl;
+                return false;
             }
-        } catch (...) {
-            std::cerr << "主角生图发生异常！" << std::endl;
+
+            try {
+                // ==========================================
+                // 3. 解析 OpenRouter 返回的 Base64 图片数据
+                // ==========================================
+                json resJson = json::parse(res->body);
+                
+                // 按照文档结构提取 Base64 字符串
+                std::string b64dataUrl = resJson["choices"][0]["message"]["images"][0]["image_url"]["url"];
+
+                // Base64 字符串开头通常是 "data:image/png;base64,"，我们需要剥除这部分前缀
+                size_t commaPos = b64dataUrl.find(',');
+                if (commaPos == std::string::npos) {
+                    std::cerr << "未找到 Base64 图片数据流" << std::endl;
+                    return false;
+                }
+                std::string actualBase64 = b64dataUrl.substr(commaPos + 1);
+
+                // ==========================================
+                // 4. 解码并直接存入本地硬盘 (不再需要发起第二次下载网络请求)
+                // ==========================================
+                std::string binaryImageData = base64_decode(actualBase64);
+
+                auto t = std::time(nullptr);
+                struct tm tm_info;
+    #ifdef _WIN32
+                localtime_s(&tm_info, &t); 
+    #else
+                localtime_r(&t, &tm_info); 
+    #endif
+                char timeBuf[128];
+                std::strftime(timeBuf, sizeof(timeBuf), "%Y%m%d_%H%M%S", &tm_info);
+                
+                std::string savePath = "saves/player_avatar_" + std::string(timeBuf) + ".png";
+                
+                std::ofstream file(savePath, std::ios::binary);
+                if (file.is_open()) {
+                    file.write(binaryImageData.data(), binaryImageData.size());
+                    file.close();
+                    
+                    this->portraitPath = savePath; 
+                    std::cout << "[System] 角色形象重构完毕，已保存至: " << savePath << std::endl;
+                    return true; 
+                }
+            } catch (const std::exception& e) {
+                std::cerr << "[Error] 解析或保存 OpenRouter 图像异常: " << e.what() << std::endl;
+                return false;
+            }
+            return false;
+        } catch (...) { 
+            return false;
         }
-        return false; 
     });
 }

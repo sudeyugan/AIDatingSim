@@ -9,8 +9,27 @@
 #include <fstream>
 #include <regex>
 #include <future>
+#include <vector>
+#include <string>
 
 using json = nlohmann::json;
+
+static std::string base64_decode(const std::string &in) {
+    std::string out;
+    std::vector<int> T(256, -1);
+    for (int i = 0; i < 64; i++) T["ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"[i]] = i;
+    int val = 0, valb = -8;
+    for (unsigned char c : in) {
+        if (T[c] == -1) break;
+        val = (val << 6) + T[c];
+        valb += 6;
+        if (valb >= 0) {
+            out.push_back(char((val >> valb) & 0xFF));
+            valb -= 8;
+        }
+    }
+    return out;
+}
 
 NPC::NPC(std::string n, std::string persona) : name(n), basePersona(persona), affection(20) {}
 
@@ -231,64 +250,64 @@ std::future<bool> NPC::generatePortraitAsync() {
         apiKey.erase(apiKey.find_last_not_of(" ") + 1);
 
         // 构造生图提示词
-        std::string prompt = "高质量动画截图，日系流行动漫番剧风格（Anime style）。高质量平涂与微光效结合，精细的描线。强烈的镜头感与氛围光影（Cinematic lighting, bloom effect）。半身立绘。角色为气质清爽大方的女学生，身姿修长，面部刻画细腻自然（避免夸张的萌系大眼），具有青年向漫画的成熟唯美感。" + appearanceDesc;
+        std::string prompt = 
+            "顶级画师创作的日系视觉小说（Galgame）角色半身立绘，Masterpiece。现代高预算动画的宣传图风格（Anime Key Visual），融合了细腻的平涂技法与电影级的丁达尔光效。人物面部刻画唯美自然，充满青年向漫画的成熟感与空气感（绝对避免夸张的幼态大眼和廉价感）。"
+            "请严格根据以下外貌设定进行精细描绘：【" + appearanceDesc + "】。"
+            "【极度重要】：请确保图片背景尽量纯净、简约或大面积留白，以便于提取角色作为游戏立绘使用。";
 
         json requestBody = {
-            {"model", "cogview-4-250304"}, // 目前智谱最新的高质量生图模型
-            {"prompt", prompt}
-            // 智谱默认就是 1024x1024，可以不用额外传 size
+            {"model", "openai/gpt-5.4-image-2"}, 
+            {"messages", json::array({{
+                {"role", "user"},
+                {"content", prompt}
+            }})},
+            {"modalities", json::array({"image"})} 
         };
 
-        httplib::Client cli("https://open.bigmodel.cn"); 
+        httplib::Client cli("https://openrouter.ai");
         cli.enable_server_certificate_verification(false);
-        cli.set_read_timeout(120, 0); // 生图比较慢，给足 120 秒等待
+        cli.set_read_timeout(240, 0); 
 
-        httplib::Headers headers = { {"Authorization", "Bearer " + apiKey} };
-        
-        // 智谱的 v4 接口路径
-        auto res = cli.Post("/api/paas/v4/images/generations", headers, requestBody.dump(), "application/json");
+        httplib::Headers headers = { 
+            {"Authorization", "Bearer " + apiKey},
+            {"Content-Type", "application/json"}
+        };
+        // openrouter接口路径
+        auto res = cli.Post("/api/v1/chat/completions", headers, requestBody.dump(), "application/json");
 
         if (!res || res->status != 200) {
-            if (res) std::cerr << "智谱生图失败: " << res->body << std::endl;
-            return false; 
+            if (res) std::cerr << "OpenRouter生图失败: 状态码 " << res->status << " - " << res->body << std::endl;
+            else std::cerr << "OpenRouter网络连接失败/超时" << std::endl;
         }
 
         try {
-            // ==========================================
-            // 2. 解析 JSON 拿到图片的下载 URL
-            // ==========================================
-            json resJson = json::parse(res->body);
-            std::string imageUrl = resJson["data"][0]["url"];
+                json resJson = json::parse(res->body);
+            std::string b64dataUrl = resJson["choices"][0]["message"]["images"][0]["image_url"]["url"];
 
-            // ==========================================
-            // 3. 提取下载链接并保存图片到本地
-            // ==========================================
-            std::regex url_regex(R"(^https?://([^/]+)(/.*)$)");
-            std::smatch url_match_result;
-            if (std::regex_match(imageUrl, url_match_result, url_regex)) {
-                std::string host = url_match_result[1];
-                std::string path = url_match_result[2];
+            size_t commaPos = b64dataUrl.find(',');
+            if (commaPos == std::string::npos) return false;
+            std::string actualBase64 = b64dataUrl.substr(commaPos + 1);
 
-                httplib::Client dl_cli("https://" + host);
-                dl_cli.enable_server_certificate_verification(false);
-                dl_cli.set_read_timeout(60, 0);
+            std::string binaryImageData = base64_decode(actualBase64);
+
+            auto t = std::time(nullptr);
+            struct tm tm_info;
+#ifdef _WIN32
+            localtime_s(&tm_info, &t);
+#else
+            localtime_r(&t, &tm_info);
+#endif
+            char timeBuf[128];
+            std::strftime(timeBuf, sizeof(timeBuf), "%Y%m%d_%H%M%S", &tm_info);
+            
+            std::string savePath = "saves/npc_avatar_" + std::string(timeBuf) + ".png";
+            std::ofstream file(savePath, std::ios::binary);
+            if (file.is_open()) {
+                file.write(binaryImageData.data(), binaryImageData.size());
+                file.close();
                 
-                auto dl_res = dl_cli.Get(path);
-                if (dl_res && dl_res->status == 200) {
-                    auto t = std::time(nullptr);
-                    struct tm tm_info;
-                    localtime_s(&tm_info, &t);
-                    char timeBuf[128];
-                    std::strftime(timeBuf, sizeof(timeBuf), "%Y%m%d_%H%M%S", &tm_info);
-                    
-                    std::string savePath = "saves/npc_avatar_" + std::string(timeBuf) + ".png";
-                    std::ofstream file(savePath, std::ios::binary);
-                    file.write(dl_res->body.c_str(), dl_res->body.size());
-                    file.close();
-                    
-                    this->portraitPath = savePath;
-                    return true; // 大功告成！
-                }
+                this->portraitPath = savePath;
+                return true;
             }
         } catch (...) {
             return false;

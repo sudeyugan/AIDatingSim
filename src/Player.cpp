@@ -105,14 +105,12 @@ std::future<bool> Player::generatePortraitAsync() {
 
             // 构造生图提示词，加入视觉小说风格限制和防和谐安全词
             std::string prompt = 
-            "顶级画师创作的日系视觉小说（Galgame）主角单人半身立绘，Masterpiece。现代高预算动画的宣传图风格（Anime Key Visual），融合细腻的平涂技法与电影级的氛围光影（Cinematic lighting）。"
-            "请根据以下背景设定与气质，精准刻画人物的神态与穿搭：【" + story + "】。"
-            "如果设定中未明确提及性别，请默认绘制成一位气质独特的俊朗青年。"
-            "【极其严格的约束】：\n"
-            "1. 画面必须且只能包含一名角色。\n"
-            "2. 这是一张最终插画，绝对不要画成多角度视图、人物设定集或拼图（No character sheet, no multiple views）。\n"
-            "3. 保持青年向漫画的写实头身比，拒绝幼态。\n"
-            "4. 背景请尽量纯净、简约或大面积留白，以便于提取角色作为游戏立绘。";
+                "A masterpiece 2D anime character portrait for a Japanese visual novel. "
+                "【Art Style】: Authentic Japanese Anime Key Visual, Kyoto Animation style. Strictly use traditional 2D cel-shading (赛璐璐平涂), flat colors, and clear lineart. "
+                "【Subject】: A handsome male protagonist (unless specified otherwise in the backstory), young adult anime aesthetic, male focus. "
+                "【STRICT EXCLUSIONS】: ABSOLUTELY NO 3D rendering, NO 2.5D, NO semi-realistic, NO Korean webtoon style (韩漫风). NO character sheet (绝对不要角色设定集), NO multiple views (不要多角度拼图). Keep the shading minimal and flat. "
+                "请根据以下背景设定与气质，精准刻画人物的神态与穿搭：【" + story + "】。"
+                "【极度重要】：请确保图片背景尽量纯净、简约或大面积留白，以便于提取角色作为游戏立绘。";
 
             json requestBody = {
                 {"model", "openai/gpt-5.4-image-2"}, 
@@ -124,6 +122,13 @@ std::future<bool> Player::generatePortraitAsync() {
             };
 
             httplib::Client cli("https://openrouter.ai");
+
+            std::string proxyHost = ConfigManager::getInstance().getProxyHost();
+            int proxyPort = ConfigManager::getInstance().getProxyPort();
+            if (!proxyHost.empty() && proxyPort > 0) {
+                cli.set_proxy(proxyHost, proxyPort);
+            }
+            
             cli.enable_server_certificate_verification(false);
             cli.set_read_timeout(180, 0); // 生图比较慢，给足 120 秒等待
 

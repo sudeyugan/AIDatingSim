@@ -31,7 +31,7 @@ static std::string base64_decode(const std::string &in) {
     return out;
 }
 
-NPC::NPC(std::string n, std::string persona) : name(n), basePersona(persona), affection(20) {}
+NPC::NPC(std::string n, std::string persona, int initAffection) : name(n), basePersona(persona), affection(initAffection) {}
 
 std::string NPC::getName() const { return name; }
 
@@ -251,7 +251,10 @@ std::future<bool> NPC::generatePortraitAsync() {
 
         // 构造生图提示词
         std::string prompt = 
-            "顶级画师创作的日系视觉小说（Galgame）角色半身立绘，Masterpiece。现代高预算动画的宣传图风格（Anime Key Visual），融合了细腻的平涂技法与电影级的丁达尔光效。人物面部刻画唯美自然，充满青年向漫画的成熟感与空气感（绝对避免夸张的幼态大眼和廉价感）。"
+            "A masterpiece 2D anime character portrait for a Japanese visual novel. "
+            "【Art Style】: Authentic Japanese Anime Key Visual, Kyoto Animation style. Strictly use traditional 2D cel-shading (赛璐璐平涂), flat colors, and clear lineart. "
+            "【Facial Features】: Classic anime face proportions, cute but mature 2D aesthetic. "
+            "【STRICT EXCLUSIONS】: ABSOLUTELY NO 3D rendering, NO 2.5D, NO semi-realistic, NO Korean webtoon style (韩漫风), NO realistic lighting, and NO glossy lips. Keep the shading minimal and flat. "
             "请严格根据以下外貌设定进行精细描绘：【" + appearanceDesc + "】。"
             "【极度重要】：请确保图片背景尽量纯净、简约或大面积留白，以便于提取角色作为游戏立绘使用。";
 
@@ -265,6 +268,13 @@ std::future<bool> NPC::generatePortraitAsync() {
         };
 
         httplib::Client cli("https://openrouter.ai");
+
+        std::string proxyHost = ConfigManager::getInstance().getProxyHost();
+        int proxyPort = ConfigManager::getInstance().getProxyPort();
+        if (!proxyHost.empty() && proxyPort > 0) {
+            cli.set_proxy(proxyHost, proxyPort);
+        }
+
         cli.enable_server_certificate_verification(false);
         cli.set_read_timeout(240, 0); 
 

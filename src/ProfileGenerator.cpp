@@ -36,7 +36,7 @@ static std::string getEntropySeed() {
 
 static std::string callLLMAPI(const std::string& prompt, bool jsonMode = false) {
     httplib::Client cli("https://api.deepseek.com");
-    cli.set_read_timeout(30, 0);
+    cli.set_read_timeout(60, 0);
 
     json reqBody = {
         {"model", "deepseek-v4-pro"},
@@ -70,31 +70,53 @@ std::future<CharacterProfile> ProfileGenerator::generateRandomProfileAsync(const
         // 【核心锚点】：如果玩家不填，默认就是普通高中
         std::string actualWorld = worldSetting.empty() ? "现代日常都市，普通的高中校园" : worldSetting;
 
-        std::vector<std::string> styles = {
-            "元气运动风，如宽松卫衣和短裤，短发",
-            "安静文学少女风，如长裙和针织衫，戴眼镜",
-            "酷飒不良风，改造过的制服，挑染头发",
-            "温婉学姐风，修长成熟，穿搭大方",
-            "地雷系或量产型穿搭，略带一点病娇感"
-        };
+        std::vector<std::string> styles = {"普通的黑发少女"};
+        std::vector<std::string> archetypes = {"温柔内向"};
+        std::vector<std::string> secrets = {"没有什么特别的烦恼"};
 
+        // 动态加载外部配置文件 traits.json
+        std::ifstream file("traits.json");
+        if (file.is_open()) {
+            try {
+                json j;
+                file >> j;
+                if (j.contains("npc_appearances") && !j["npc_appearances"].empty()) 
+                    styles = j["npc_appearances"].get<std::vector<std::string>>();
+                if (j.contains("npc_archetypes") && !j["npc_archetypes"].empty()) 
+                    archetypes = j["npc_archetypes"].get<std::vector<std::string>>();
+                if (j.contains("npc_secrets") && !j["npc_secrets"].empty()) 
+                    secrets = j["npc_secrets"].get<std::vector<std::string>>();
+            } catch (const std::exception& e) {
+                std::cerr << "[Warning] 解析 traits.json 失败, 使用默认设定: " << e.what() << std::endl;
+            }
+            file.close();
+        } else {
+            std::cerr << "[Warning] 未找到 traits.json 配置文件，使用默认设定。" << std::endl;
+        }
+
+        // 随机抽取
         std::mt19937 gen(std::chrono::system_clock::now().time_since_epoch().count());
-        int styleIdx = std::uniform_int_distribution<>(0, styles.size() - 1)(gen);
-        std::string randomStyle = styles[styleIdx];
+        std::string randomStyle = styles[std::uniform_int_distribution<>(0, styles.size() - 1)(gen)];
+        std::string randomArchetype = archetypes[std::uniform_int_distribution<>(0, archetypes.size() - 1)(gen)];
+        std::string randomSecret = secrets[std::uniform_int_distribution<>(0, secrets.size() - 1)(gen)];
 
         std::string prompt = 
             "【角色设定】\n"
             "你是一位顶级的 Galgame（恋爱模拟游戏）剧本家，擅长塑造细腻、真实的女性角色。\n\n"
             "【生成随机熵】： " + getEntropySeed() + "（请利用此随机数确保本次生成的角色与以往不同，最大化多样性）\n\n"
             "【当前世界观设定】\n" + actualWorld + "\n\n"
+            "【极度强制的设定组合】（请务必将以下三种元素完美融合到角色中，产生反差感）：\n"
+            "1. 外貌风格锚点：【" + randomStyle + "】\n"
+            "2. 核心性格原型：【" + randomArchetype + "】\n"
+            "3. 隐藏的秘密/创伤：【" + randomSecret + "】\n\n"
             "【核心生成规则】\n"
             "1. 如果【当前世界观设定】为“现代日常都市”、“普通高中”或为空，你必须严格遵循以下限制：\n"
-            "   - 绝对禁止：任何魔法、科幻、超能力、穿越、异世界、霸道总裁、黑帮大小姐等夸张元素。\n"
-            "   - 角色身份限制：她必须是一个的高中生（例如：班委、社团成员、隔壁班同学、图书管理员等）。\n"
-            "   - 风格：日常、青春、治愈或带着青春期的烦恼（如升学压力、人际关系、暗恋等）,也有一定概率包含不为人知的心理创伤。\n"
+            "   - 绝对禁止：任何魔法、科幻、超能力、穿越、异世界、霸道总裁等夸张元素。\n"
+            "   - 角色身份限制：她必须是一个高中生。\n"
             "2. 如果【当前世界观设定】明确指定了其他背景，请忽略第1条，并严格贴合指定的世界观生成角色。\n\n"
             "3. 【外貌生成建议】：请重点参考这种风格进行描写——【" + randomStyle + "】。请发挥想象力，保证发型、发色等风格的多样性。拒绝幼态。\n\n"
             "【输出要求】\n"
+            "【极度重要】：JSON 的键值对之间必须严格使用英文字符的半角逗号（,）分隔！绝对禁止使用中文逗号（，）！\n"
             "必须且只能输出合法的 JSON 格式，字段如下：\n"
             "{\n"
             "  \"name\": \"角色的全名\",\n"
@@ -106,6 +128,7 @@ std::future<CharacterProfile> ProfileGenerator::generateRandomProfileAsync(const
             "}";
 
         std::string response = callLLMAPI(prompt, true);
+        
         try {
             json j = json::parse(response);
             profile.name = j.value("name", "神秘少女");
@@ -127,10 +150,29 @@ std::future<Player> ProfileGenerator::generatePlayerProfileAsync(const std::stri
     return std::async(std::launch::async, [worldSetting]() {
         std::string actualWorld = worldSetting.empty() ? "现代日常都市，普通的高中校园" : worldSetting;
         
+        std::vector<std::string> playerBackgrounds = {"一个随处可见的普通学生。"};
+
+        // 动态加载外部配置文件
+        std::ifstream file("traits.json");
+        if (file.is_open()) {
+            try {
+                json j;
+                file >> j;
+                if (j.contains("player_backgrounds") && !j["player_backgrounds"].empty()) {
+                    playerBackgrounds = j["player_backgrounds"].get<std::vector<std::string>>();
+                }
+            } catch (...) {}
+            file.close();
+        }
+
+        std::mt19937 gen(std::chrono::system_clock::now().time_since_epoch().count());
+        std::string randomBg = playerBackgrounds[std::uniform_int_distribution<>(0, playerBackgrounds.size() - 1)(gen)];
+        
         std::string prompt = 
             "【设定说明】\n"
             "作为Galgame策划，请根据当前世界观：【" + actualWorld + "】，生成玩家的主角设定。\n\n"
-            "【生成随机熵】： " + getEntropySeed() + "（请利用此随机数确保本次生成的角色与以往不同，最大化多样性）\n\n"
+            "【强制的主角开局处境】\n"
+            "请基于以下处境进行深度扩写和润色：【" + randomBg + "】\n\n"
             "【核心约束】\n"
             "1. 如果世界观是“现代/普通高中”或为空，主角必须是一个男高中生。背景应当贴近日常（例如：刚搬家过来的转校生、青梅竹马的邻居等）。\n"
             "2. 绝对禁止“龙傲天”、“兵王回归”、“隐藏富二代”等夸张爽文设定。\n"
@@ -140,9 +182,10 @@ std::future<Player> ProfileGenerator::generatePlayerProfileAsync(const std::stri
             "   - 属性总和请严格控制在 360 - 480 之间，以体现角色的长处与短板，一定要符合故事逻辑！\n\n"
             "【输出格式】\n"
             "必须且只能返回JSON：\n"
+            "【极度重要】：JSON 的键值对之间必须严格使用英文字符的半角逗号（,）分隔！绝对禁止使用中文逗号（，）！\n"
             "{\n"
             "  \"name\": \"主角名字\",\n"
-            "  \"backstory\": \"详细阐述主角的背景、身世、性格底色以及目前的处境，要求详细阐述，使玩家有足够的了解，有代入感。\"\n"
+            "  \"backstory\": \"详细阐述主角的背景、身世、性格底色以及目前的处境，要求详细阐述，使玩家有足够的了解，有代入感。\",\n"
             "  \"physique\": 50,\n"
             "  \"intellect\": 60,\n"
             "  \"charm\": 55,\n"
@@ -168,7 +211,10 @@ std::future<Player> ProfileGenerator::generatePlayerProfileAsync(const std::stri
                 j.value("empathy", 50),
                 j.value("luck", 50)
             );
-        } catch (...) {
+        } catch (const std::exception& e) {
+            // 【新增】：打印详细报错，方便排查
+            std::cerr << "[Error] 玩家数据解析失败: " << e.what() << std::endl;
+            std::cerr << "[Error] 大模型原始返回内容: {" << response << "}" << std::endl;
             newPlayer.setBackstory("普通的转校生。（量子发生扰动，记忆解析失败）");
         }
         return newPlayer;
@@ -357,8 +403,9 @@ std::string ProfileGenerator::generateBackgroundAsync(const std::string& sceneDe
         // ==========================================
         // 构造背景的专属提示词
         std::string prompt = 
-            "顶级画师创作的日系视觉小说（Galgame）背景CG空景图，Masterpiece。新海诚风格（Makoto Shinkai style）的绝美场景，极致的环境细节刻画，强调令人惊叹的全局光照、真实的材质反射与强烈的氛围感（Cinematic lighting, depth of field）。"
-            "【极其严格的约束】：这是一张纯粹的环境空景，绝对、绝对不能画出任何人类、动物或角色的身影！画面中必须空无一人！"
+            "A masterpiece 2D anime background CG for a Japanese visual novel. "
+            "【Art Style】: Authentic Japanese Anime Key Visual, Makoto Shinkai style but strictly 2D painted. High-quality 2D anime background art (动画场景美术), beautiful anime scenery, gorgeous sky and environment. "
+            "【STRICT EXCLUSIONS】: ABSOLUTELY NO humans, NO characters, NO animals, NO living creatures! The scene MUST be completely empty of people. NO 3D rendering, NO Unreal Engine, NO photography, NO realistic textures. Keep it pure 2D illustration. "
             "请根据以下剧情场景的描写进行完美的构图：【" + sceneDescription + "】。";
 
         json requestBody = {
@@ -371,8 +418,13 @@ std::string ProfileGenerator::generateBackgroundAsync(const std::string& sceneDe
         };
 
         httplib::Client cli("https://openrouter.ai");
+        std::string proxyHost = ConfigManager::getInstance().getProxyHost();
+        int proxyPort = ConfigManager::getInstance().getProxyPort();
+        if (!proxyHost.empty() && proxyPort > 0) {
+            cli.set_proxy(proxyHost, proxyPort);
+        }
         cli.enable_server_certificate_verification(false);
-        cli.set_read_timeout(240, 0);// 生图比较慢，给足 120 秒等待
+        cli.set_read_timeout(360, 0);// 生图比较慢，给足 120 秒等待
 
         httplib::Headers headers = { 
             {"Authorization", "Bearer " + apiKey},

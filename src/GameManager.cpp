@@ -189,18 +189,25 @@ void GameManager::checkAsyncTasks() {
             currentNPC = futureProfile.get(); 
             isGeneratingNPC = false;          
             
-            std::string complexPersona = "外貌：" + currentNPC.appearance + "。核心性格：" + currentNPC.personality_core + "。隐藏创伤/执念：" + currentNPC.hidden_trauma;
-            activeNPC = std::make_unique<NPC>(currentNPC.name, complexPersona);
-            
-            npcImageLoader.Free(); // 清空上一任 NPC 的立绘
-            isGeneratingPortrait = true;
-            futurePortrait = activeNPC->generatePortraitAsync();
+            if (!currentNPC.is_generated || currentNPC.name == "神秘少女") {
+                uiChatHistory.clear();
+                uiChatHistory.push_back({"系统", "【警告】量子扰动，角色灵魂解析失败（网络超时或接口格式错误）。请再试一次。"});
+                // 失败后直接跳过生图逻辑
+            } else {
+                std::string complexPersona = "外貌：" + currentNPC.appearance + "。核心性格：" + currentNPC.personality_core + "。隐藏创伤/执念：" + currentNPC.hidden_trauma;
+                activeNPC = std::make_unique<NPC>(currentNPC.name, complexPersona, currentNPC.initial_affection);
+                
+                npcImageLoader.Free(); // 清空上一任 NPC 的立绘
+                
+                // 只有成功了才去请求昂贵的生图 API
+                isGeneratingPortrait = true;
+                futurePortrait = activeNPC->generatePortraitAsync();
 
-            hasEncounterStarted = false; 
-            uiChatHistory.clear();
-            uiChatHistory.push_back({"系统", currentNPC.name + " 的灵魂已在当前世界降临。"});
-            uiChatHistory.push_back({"系统", "请在准备好后，点击下方的“开始邂逅”按钮。"});
-                    
+                hasEncounterStarted = false; 
+                uiChatHistory.clear();
+                uiChatHistory.push_back({"系统", currentNPC.name + " 的灵魂已在当前世界降临。"});
+                uiChatHistory.push_back({"系统", "请在准备好后，点击下方的“开始邂逅”按钮。"});
+            }       
         }
     }
 
@@ -233,15 +240,23 @@ void GameManager::checkAsyncTasks() {
             mainPlayer = futurePlayerProfile.get(); 
             isGeneratingPlayer = false;         
             
-            // ===========触发主角头像生成 ===========
-            playerImageLoader.Free(); // 清空老头像
-            isGeneratingPlayerPortrait = true;
-            futurePlayerPortrait = mainPlayer.generatePortraitAsync();
-            // ===============================================
+            if (mainPlayer.getBackstory().find("记忆解析失败") != std::string::npos) {
+                uiChatHistory.clear();
+                uiChatHistory.push_back({"系统", "【警告】时空乱流，人生重塑失败（网络或解析错误）。请重新点击重塑人生。"});
+                // 失败后直接跳过生图逻辑
+            } else {
+                // ===========触发主角头像生成 ===========
+                playerImageLoader.Free(); // 清空老头像
+                
+                // 只有成功了才去请求生图 API
+                isGeneratingPlayerPortrait = true;
+                futurePlayerPortrait = mainPlayer.generatePortraitAsync();
+                // ===============================================
 
-            uiChatHistory.clear();
-            hasEncounterStarted = false;           
-            uiChatHistory.push_back({"系统", "命运的齿轮转动，你以新身份降临。"});
+                uiChatHistory.clear();
+                hasEncounterStarted = false;           
+                uiChatHistory.push_back({"系统", "命运的齿轮转动，你以新身份降临。"});
+            }
         }
     }
 
@@ -682,6 +697,24 @@ void GameManager::renderUI() {
                     });
                 }
             }
+        } else if (activeNPC != nullptr && !hasEncounterStarted) {
+            // =================未邂逅时的引导按钮 =================
+            ImGui::Spacing(); ImGui::Spacing();
+            ImVec2 avail = ImGui::GetContentRegionAvail();
+            ImGui::SetCursorPosX((avail.x - 240) * 0.5f); // 居中计算
+            
+            if (isGeneratingEncounter) {
+                ImGui::BeginDisabled(); 
+                ImGui::Button("命运正在交汇...", ImVec2(240, 42)); 
+                ImGui::EndDisabled();
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.96f, 0.54f, 0.64f, 1.0f)); // 使用更粉嫩的高亮色
+                if (ImGui::Button("开启我们的邂逅", ImVec2(240, 42))) {
+                    isGeneratingEncounter = true;
+                    futureEncounter = ProfileGenerator::generateEncounterAsync(std::string(worldSettingBuf), mainPlayer, currentNPC);
+                }
+                ImGui::PopStyleColor();
+            } 
         } else {
             // 普通对话输入区
             ImGui::SetCursorPos(ImVec2(15, 15));
@@ -946,17 +979,6 @@ void GameManager::renderUI() {
             }
         }
         
-        if (activeNPC != nullptr && !hasEncounterStarted) {
-            ImGui::SameLine();
-            if (isGeneratingEncounter) {
-                ImGui::BeginDisabled(); ImGui::Button("靠近中...", ImVec2(120, 32)); ImGui::EndDisabled();
-            } else {
-                if (ImGui::Button("开始邂逅", ImVec2(120, 32))) {
-                    isGeneratingEncounter = true;
-                    futureEncounter = ProfileGenerator::generateEncounterAsync(std::string(worldSettingBuf), mainPlayer, currentNPC);
-                }
-            }
-        }
         ImGui::Columns(1);
         ImGui::EndChild();
         ImGui::PopStyleColor();
@@ -1145,6 +1167,7 @@ bool GameManager::saveGame(const std::string& filename) {
     saveData["currentTime"] = static_cast<int>(currentTime);
     saveData["chatTurns"] = chatTurns;
     saveData["worldSetting"] = std::string(worldSettingBuf);
+    saveData["hasEncounterStarted"] = hasEncounterStarted;
 
     // 2. 存储玩家数据 (现在的变量叫 mainPlayer，且是对象不是指针)
     saveData["player"] = mainPlayer.toJson();
@@ -1226,7 +1249,7 @@ bool GameManager::loadGame(const std::string& filename) {
         currentNPC.is_generated = saveData.value("profile_is_generated", false);
 
         // 重新实例化大脑并灌入记忆
-        activeNPC = std::make_shared<NPC>("Temp", "Temp");
+        activeNPC = std::make_shared<NPC>("Temp", "Temp", 20);
         activeNPC->fromJson(saveData["activeNPC"]);
 
         // 【图形学魔法】：根据 JSON 里的路径，重新把立绘塞回 OpenGL 显卡！
@@ -1234,7 +1257,7 @@ bool GameManager::loadGame(const std::string& filename) {
         if (!portraitPath.empty()) {
             npcImageLoader.LoadFromFile(portraitPath);
         }
-        hasEncounterStarted = true; // 既然能存下来，那肯定已经相遇了
+        hasEncounterStarted = saveData.value("hasEncounterStarted", true);
     }
 
     // 4. 恢复右侧 UI 的聊天气泡记录

@@ -28,7 +28,7 @@ private:
     ImageLoader portraitImage;
 
 public:
-    NPC(std::string n, std::string persona);
+    NPC(std::string n, std::string persona, int initAffection = 0);
 
     nlohmann::json toJson() const;
     void fromJson(const nlohmann::json& j);

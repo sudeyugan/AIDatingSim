@@ -5,6 +5,8 @@ class ConfigManager {
 private:
     std::string apiKey;
     std::string imageApiKey;
+    std::string proxyHost; 
+    int proxyPort = 0;
 
     // 私有化构造函数，防止外部 `new ConfigManager()`
     ConfigManager() = default; 
@@ -23,4 +25,7 @@ public:
     // 获取 API Key
     std::string getApiKey() const;
     std::string getImageApiKey() const;
+
+    std::string getProxyHost() const { return proxyHost; }
+    int getProxyPort() const { return proxyPort; }
 };

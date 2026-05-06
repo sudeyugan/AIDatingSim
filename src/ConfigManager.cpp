@@ -29,6 +29,14 @@ bool ConfigManager::loadConfig(const std::string& filePath) {
             imageApiKey = j["image_api_key"];
         }
 
+        if (j.contains("proxy_host") && j["proxy_host"].is_string()) {
+        proxyHost = j["proxy_host"];
+        }
+        
+        if (j.contains("proxy_port") && j["proxy_port"].is_number()) {
+            proxyPort = j["proxy_port"];
+        }
+
         return true;
     } catch (const std::exception& e) {
         std::cerr << "[Error] 解析 config.json 失败: " << e.what() << std::endl;

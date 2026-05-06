@@ -103,7 +103,6 @@ std::future<CharacterProfile> ProfileGenerator::generateRandomProfileAsync(const
         std::string prompt = 
             "【角色设定】\n"
             "你是一位顶级的 Galgame（恋爱模拟游戏）剧本家，擅长塑造细腻、真实的女性角色。\n\n"
-            "【生成随机熵】： " + getEntropySeed() + "（请利用此随机数确保本次生成的角色与以往不同，最大化多样性）\n\n"
             "【当前世界观设定】\n" + actualWorld + "\n\n"
             "【极度强制的设定组合】（请务必将以下三种元素完美融合到角色中，产生反差感）：\n"
             "1. 外貌风格锚点：【" + randomStyle + "】\n"
@@ -112,7 +111,7 @@ std::future<CharacterProfile> ProfileGenerator::generateRandomProfileAsync(const
             "【核心生成规则】\n"
             "1. 如果【当前世界观设定】为“现代日常都市”、“普通高中”或为空，你必须严格遵循以下限制：\n"
             "   - 绝对禁止：任何魔法、科幻、超能力、穿越、异世界、霸道总裁等夸张元素。\n"
-            "   - 角色身份限制：她必须是一个高中生。\n"
+            "2. 追求真实感与合理性：不需要刻意制造夸张的反差。请生动、合理地解释她的经历是如何塑造她的性格与外表的，使她成为一个有血有肉的真实角色。\n\n"
             "2. 如果【当前世界观设定】明确指定了其他背景，请忽略第1条，并严格贴合指定的世界观生成角色。\n\n"
             "3. 【外貌生成建议】：请重点参考这种风格进行描写——【" + randomStyle + "】。请发挥想象力，保证发型、发色等风格的多样性。拒绝幼态。\n\n"
             "【输出要求】\n"

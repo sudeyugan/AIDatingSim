@@ -48,6 +48,8 @@ private:
     };
     std::vector<SaveFileInfo> parsedSaves;
 
+    std::string currentBgPath = "";
+
     // ================= [异步状态机变量] =================
     bool isAIBusy = false;
     std::future<bool> currentAITask;            

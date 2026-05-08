@@ -38,7 +38,7 @@ std::string NPC::getName() const { return name; }
 std::string NPC::generateDynamicSystemPrompt(const Player& player) const {
     std::string prompt = 
         "【系统设定】\n"
-        "你现在正在扮演一个恋爱模拟游戏中的女性角色。请完全沉浸在这个角色中，绝对不要承认自己是AI或者语言模型。\n\n"
+        "你现在正在扮演一个恋爱模拟游戏中的角色。请完全沉浸在这个角色中，绝对不要承认自己是AI或者语言模型。\n\n"
         "【你的身份】\n"
         "名字：" + name + "\n"
         "设定：" + basePersona + "\n"
@@ -276,7 +276,7 @@ std::future<bool> NPC::generatePortraitAsync() {
         }
 
         cli.enable_server_certificate_verification(false);
-        cli.set_read_timeout(240, 0); 
+        cli.set_read_timeout(360, 0); 
 
         httplib::Headers headers = { 
             {"Authorization", "Bearer " + apiKey},
@@ -291,7 +291,7 @@ std::future<bool> NPC::generatePortraitAsync() {
         }
 
         try {
-                json resJson = json::parse(res->body);
+            json resJson = json::parse(res->body);
             std::string b64dataUrl = resJson["choices"][0]["message"]["images"][0]["image_url"]["url"];
 
             size_t commaPos = b64dataUrl.find(',');

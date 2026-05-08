@@ -113,7 +113,7 @@ std::future<CharacterProfile> ProfileGenerator::generateRandomProfileAsync(const
 
         std::string prompt = 
             "【角色设定】\n"
-            "你是一位顶级的 Galgame（恋爱模拟游戏）剧本家，擅长塑造细腻、真实的女性角色。\n\n"
+            "你是一位顶级的 Galgame（恋爱模拟游戏）剧本家，擅长塑造细腻、真实的角色。\n\n"
             "【当前世界观设定】\n" + actualWorld + "\n\n"
             "【极度强制的设定组合】（请务必将以下三种元素完美融合到角色中，产生反差感）：\n"
             "1. 外貌风格锚点：【" + randomStyle + "】\n"
@@ -398,6 +398,25 @@ std::future<std::pair<std::string, bool>> ProfileGenerator::generateTransitionSc
 std::string ProfileGenerator::generateBackgroundAsync(const std::string& sceneDescription) {
     std::cout << "[System] 开始根据场景重构世界画面..." << std::endl;
     try {
+
+
+        std::string purifyPrompt = 
+            "你是一个游戏美术概念提取器。请从以下剧情文本中，提取出【纯粹的环境和背景视觉元素】翻译为连贯的英文，用于 AI 绘画。\n"
+            "【绝对规则】：绝对不能出现任何人物(humans/girls/boys)、躯体部位(如锁骨/汗珠/胸膛)、人物动作、对话！\n"
+            "【保留重点】：时间（如dusk/night/noon）、光影色彩、天气、建筑外观、具体的静物细节。\n"
+            "【输出格式】：只输出纯英文的画面描述，绝对不要包含任何前缀、解释或废话。\n"
+            "待提取的剧情文本：\n【" + sceneDescription + "】";
+
+        std::string pureVisualPrompt = callLLMAPI(purifyPrompt, false);
+        
+        pureVisualPrompt.erase(std::remove(pureVisualPrompt.begin(), pureVisualPrompt.end(), '\n'), pureVisualPrompt.end());
+        pureVisualPrompt.erase(std::remove(pureVisualPrompt.begin(), pureVisualPrompt.end(), '\r'), pureVisualPrompt.end());
+        
+        if (pureVisualPrompt.empty() || pureVisualPrompt.length() < 5) {
+            pureVisualPrompt = "beautiful anime scenery, peaceful environment, empty background"; 
+        }
+
+        std::cout << "[Debug] 净化后的纯生图 Prompt: " << pureVisualPrompt << std::endl;
         // ==========================================
         // 1. 准备 API Key
         // ==========================================
@@ -418,9 +437,9 @@ std::string ProfileGenerator::generateBackgroundAsync(const std::string& sceneDe
         // 构造背景的专属提示词
         std::string prompt = 
             "A masterpiece 2D anime background CG for a Japanese visual novel. "
-            "【Art Style】: Authentic Japanese Anime Key Visual, Makoto Shinkai style but strictly 2D painted. High-quality 2D anime background art (动画场景美术), beautiful anime scenery, gorgeous sky and environment. "
+            "【Art Style】: Authentic Japanese Anime Key Visual, high-quality Japanese anime movie style but strictly 2D painted. High-quality 2D anime background art (动画场景美术), beautiful anime scenery, gorgeous sky and environment. "
             "【STRICT EXCLUSIONS】: ABSOLUTELY NO humans, NO characters, NO animals, NO living creatures! The scene MUST be completely empty of people. NO 3D rendering, NO Unreal Engine, NO photography, NO realistic textures. Keep it pure 2D illustration. "
-            "请根据以下剧情场景的描写进行完美的构图：【" + sceneDescription + "】。";
+            "【Scene Description】: " + pureVisualPrompt;
 
         json requestBody = {
             {"model", "openai/gpt-5.4-image-2"}, 
@@ -450,36 +469,59 @@ std::string ProfileGenerator::generateBackgroundAsync(const std::string& sceneDe
         if (!res || res->status != 200) {
             if (res) std::cerr << "OpenRouter生图失败: 状态码 " << res->status << " - " << res->body << std::endl;
             else std::cerr << "OpenRouter网络连接失败/超时" << std::endl;
+            return "";
         }
 
         json resJson = json::parse(res->body);
-            std::string b64dataUrl = resJson["choices"][0]["message"]["images"][0]["image_url"]["url"];
 
-            size_t commaPos = b64dataUrl.find(',');
-            if (commaPos == std::string::npos) return "";
-            std::string actualBase64 = b64dataUrl.substr(commaPos + 1);
+        std::string b64dataUrl = "";
 
-            std::string binaryImageData = base64_decode(actualBase64);
-
-            auto t = std::time(nullptr);
-            struct tm tm_info;
-    #ifdef _WIN32
-            localtime_s(&tm_info, &t); 
-    #else
-            localtime_r(&t, &tm_info); 
-    #endif
-            char timeBuf[128];
-            std::strftime(timeBuf, sizeof(timeBuf), "%Y%m%d_%H%M%S", &tm_info);
-            
-            std::string savePath = "saves/bg_" + std::string(timeBuf) + ".png";
-            
-            std::ofstream file(savePath, std::ios::binary);
-            if (file.is_open()) {
-                file.write(binaryImageData.data(), binaryImageData.size());
-                file.close();
-                std::cout << "[System] 场景重构完毕，已保存至: " << savePath << std::endl;
-                return savePath; 
+        // 尝试安全地解析多模态对话格式
+        if (resJson.contains("choices") && !resJson["choices"].empty()) {
+            auto& message = resJson["choices"][0]["message"];
+            if (message.contains("images") && !message["images"].empty() && message["images"][0].contains("image_url")) {
+                b64dataUrl = message["images"][0]["image_url"].value("url", "");
             }
+        }
+        
+        // 如果上面没找到，再尝试标准生图格式 (data数组)
+        if (b64dataUrl.empty() && resJson.contains("data") && !resJson["data"].empty()) {
+            b64dataUrl = resJson["data"][0].value("b64_json", "");
+            if (b64dataUrl.empty()) {
+                b64dataUrl = resJson["data"][0].value("url", "");
+            }
+        }
+
+        if (b64dataUrl.empty()) {
+            std::cerr << "[Error] 无法从返回的数据中提取图片 URL/Base64" << std::endl;
+            return "";
+        }
+
+        // 处理 Base64 格式的头部 (如 data:image/png;base64,xxx)
+        size_t commaPos = b64dataUrl.find(',');
+        std::string actualBase64 = (commaPos != std::string::npos) ? b64dataUrl.substr(commaPos + 1) : b64dataUrl;
+
+        std::string binaryImageData = base64_decode(actualBase64);
+
+        auto t = std::time(nullptr);
+        struct tm tm_info;
+#ifdef _WIN32
+        localtime_s(&tm_info, &t); 
+#else
+        localtime_r(&t, &tm_info); 
+#endif
+        char timeBuf[128];
+        std::strftime(timeBuf, sizeof(timeBuf), "%Y%m%d_%H%M%S", &tm_info);
+        
+        std::string savePath = "saves/bg_" + std::string(timeBuf) + ".png";
+        
+        std::ofstream file(savePath, std::ios::binary);
+        if (file.is_open()) {
+            file.write(binaryImageData.data(), binaryImageData.size());
+            file.close();
+            std::cout << "[System] 场景重构完毕，已保存至: " << savePath << std::endl;
+            return savePath; 
+        }
     } catch (const std::exception& e) {
         std::cerr << "[Error] 解析或保存背景图异常: " << e.what() << std::endl;
     }

@@ -110,6 +110,9 @@ uiChatHistory.clear();
     activeNPC = nullptr;
     currentNPC = CharacterProfile(); 
     npcImageLoader.Free(); // 清理显卡中的图片
+
+    chatBgLoader.Free(); 
+    currentBgPath = "";
     
     // 5. 重置主角状态 (你可以根据 Player 类的构造函数自行调整)
     mainPlayer = Player("主角"); 
@@ -230,6 +233,7 @@ void GameManager::checkAsyncTasks() {
             isGeneratingBg = false;
             if (!bgPath.empty()) {
                 chatBgLoader.LoadFromFile(bgPath);
+                currentBgPath = bgPath;
             }
         }
     }
@@ -608,7 +612,7 @@ void GameManager::renderUI() {
         ImVec2 chatMin = ImGui::GetWindowPos();
         ImVec2 chatMax = ImVec2(chatMin.x + ImGui::GetWindowSize().x, chatMin.y + ImGui::GetWindowSize().y);
         if (chatBgLoader.isLoaded()) {
-            ImGui::GetWindowDrawList()->AddImage((void*)(intptr_t)chatBgLoader.getTextureID(), chatMin, chatMax, ImVec2(0,0), ImVec2(1,1), IM_COL32(255,255,255,180));
+            ImGui::GetWindowDrawList()->AddImage((void*)(intptr_t)chatBgLoader.getTextureID(), chatMin, chatMax, ImVec2(0,0), ImVec2(1,1), IM_COL32(255,255,255,220));
         } else {
             ImGui::GetWindowDrawList()->AddRectFilled(chatMin, chatMax, IM_COL32(245, 245, 248, 255)); // 浅灰背景兜底
         }
@@ -1168,6 +1172,7 @@ bool GameManager::saveGame(const std::string& filename) {
     saveData["chatTurns"] = chatTurns;
     saveData["worldSetting"] = std::string(worldSettingBuf);
     saveData["hasEncounterStarted"] = hasEncounterStarted;
+    saveData["currentBgPath"] = currentBgPath;
 
     // 2. 存储玩家数据 (现在的变量叫 mainPlayer，且是对象不是指针)
     saveData["player"] = mainPlayer.toJson();
@@ -1266,6 +1271,13 @@ bool GameManager::loadGame(const std::string& filename) {
         for (const auto& item : saveData["uiChatHistory"]) {
             uiChatHistory.push_back({item["speaker"], item["content"]});
         }
+    }
+
+    currentBgPath = saveData.value("currentBgPath", "");
+    if (!currentBgPath.empty()) {
+        chatBgLoader.LoadFromFile(currentBgPath);
+    } else {
+        chatBgLoader.Free(); // 如果旧存档没有背景，就清空画面
     }
 
     return true;

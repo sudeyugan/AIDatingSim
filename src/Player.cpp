@@ -130,7 +130,7 @@ std::future<bool> Player::generatePortraitAsync() {
             }
             
             cli.enable_server_certificate_verification(false);
-            cli.set_read_timeout(180, 0); // 生图比较慢，给足 120 秒等待
+            cli.set_read_timeout(360, 0); // 生图比较慢，给足 120 秒等待
 
             httplib::Headers headers = { 
                 {"Authorization", "Bearer " + apiKey},

@@ -975,7 +975,7 @@ void GameManager::renderUI() {
         } else {
             if (ImGui::Button("邂逅新角色", ImVec2(120, 32))) { 
                 isGeneratingNPC = true; 
-                futureProfile = ProfileGenerator::generateRandomProfileAsync(std::string(worldSettingBuf)); 
+                futureProfile = ProfileGenerator::generateRandomProfileAsync(std::string(worldSettingBuf), mainPlayer); 
             }
         }
         

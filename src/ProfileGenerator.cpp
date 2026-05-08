@@ -64,8 +64,8 @@ static std::string callLLMAPI(const std::string& prompt, bool jsonMode = false) 
 }
 
 //角色档案生成
-std::future<CharacterProfile> ProfileGenerator::generateRandomProfileAsync(const std::string& worldSetting) {
-    return std::async(std::launch::async, [worldSetting]() {
+std::future<CharacterProfile> ProfileGenerator::generateRandomProfileAsync(const std::string& worldSetting, const Player& player) {
+    return std::async(std::launch::async, [worldSetting, player]() {
         CharacterProfile profile;
         // 【核心锚点】：如果玩家不填，默认就是普通高中
         std::string actualWorld = worldSetting.empty() ? "现代日常都市，普通的高中校园" : worldSetting;
@@ -100,6 +100,17 @@ std::future<CharacterProfile> ProfileGenerator::generateRandomProfileAsync(const
         std::string randomArchetype = archetypes[std::uniform_int_distribution<>(0, archetypes.size() - 1)(gen)];
         std::string randomSecret = secrets[std::uniform_int_distribution<>(0, secrets.size() - 1)(gen)];
 
+        std::string playerInfo = 
+            "【面对的玩家（主角）设定】\n"
+            "名字：" + player.getName() + "\n"
+            "身世背景：" + player.getBackstory() + "\n"
+            "当前六维属性：体格=" + std::to_string(player.getPhysique()) + 
+            "，智识=" + std::to_string(player.getIntellect()) + 
+            "，魅力=" + std::to_string(player.getCharm()) + 
+            "，财力=" + std::to_string(player.getWealth()) + 
+            "，共情=" + std::to_string(player.getEmpathy()) + 
+            "，运气=" + std::to_string(player.getLuck()) + "\n";
+
         std::string prompt = 
             "【角色设定】\n"
             "你是一位顶级的 Galgame（恋爱模拟游戏）剧本家，擅长塑造细腻、真实的女性角色。\n\n"
@@ -114,6 +125,10 @@ std::future<CharacterProfile> ProfileGenerator::generateRandomProfileAsync(const
             "2. 追求真实感与合理性：不需要刻意制造夸张的反差。请生动、合理地解释她的经历是如何塑造她的性格与外表的，使她成为一个有血有肉的真实角色。\n\n"
             "2. 如果【当前世界观设定】明确指定了其他背景，请忽略第1条，并严格贴合指定的世界观生成角色。\n\n"
             "3. 【外貌生成建议】：请重点参考这种风格进行描写——【" + randomStyle + "】。请发挥想象力，保证发型、发色等风格的多样性。拒绝幼态。\n\n"
+            "4. 【初始好感度动态判定（极度重要）】：请综合考量该角色的【核心性格】与【玩家主角的属性/身世】和【对主角的初始态度】来推算 initial_affection。范围在 0 到 +30 之间。\n"
+            "   - 例如：如果玩家魅力极高，且该角色是颜控，初始好感度可以较高；\n"
+            "   - 如果玩家财力极高，且该角色背负债务，初始好感度可能也会偏高（甚至带有功利性）；\n"
+            "   - 请绝对不要再机械地输出 0！要有逻辑地进行数值赋予！\n\n"
             "【输出要求】\n"
             "【极度重要】：JSON 的键值对之间必须严格使用英文字符的半角逗号（,）分隔！绝对禁止使用中文逗号（，）！\n"
             "必须且只能输出合法的 JSON 格式，字段如下：\n"
@@ -123,7 +138,7 @@ std::future<CharacterProfile> ProfileGenerator::generateRandomProfileAsync(const
             "  \"personality_core\": \"核心性格特点，足够详细具体\",\n"
             "  \"hidden_trauma\": \"隐藏的烦恼或执念，足够详细具体\",\n"
             "  \"initial_attitude\": \"对主角的初始态度\",\n"
-            "  \"initial_affection\": 0\n"
+            "  \"initial_affection\": 20\n"
             "}";
 
         std::string response = callLLMAPI(prompt, true);

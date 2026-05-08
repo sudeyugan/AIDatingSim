@@ -21,7 +21,7 @@ public:
     static std::future<Player> generatePlayerProfileAsync();
 
     //接收世界观参数
-    static std::future<CharacterProfile> generateRandomProfileAsync(const std::string& worldSetting);
+    static std::future<CharacterProfile> generateRandomProfileAsync(const std::string& worldSetting, const Player& player);
     static std::future<Player> generatePlayerProfileAsync(const std::string& worldSetting);
     
     //随机生成一个极具创意的世界观设定

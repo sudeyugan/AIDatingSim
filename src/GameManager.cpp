@@ -155,6 +155,12 @@ void GameManager::checkAsyncTasks() {
             isWaitingForReply = false;
             
             chatTurns++; // 增加回合数
+
+            if (activeNPC && activeNPC->getChatHistorySize() >= 30) { // 建议设为 12 或 16
+                addBackgroundTask(std::async(std::launch::async, [this]() {
+                    this->activeNPC->compressMemory(this->mainPlayer);
+                }));
+            }
             // 1. 【优先】判定是否触发命运事件（高潮打断）
             if (response.trigger_event && !isEventActive) {
                 isGeneratingEvent = true;
@@ -203,8 +209,8 @@ void GameManager::checkAsyncTasks() {
                 npcImageLoader.Free(); // 清空上一任 NPC 的立绘
                 
                 // 只有成功了才去请求昂贵的生图 API
-                isGeneratingPortrait = true;
-                futurePortrait = activeNPC->generatePortraitAsync();
+                //isGeneratingPortrait = true;
+                //futurePortrait = activeNPC->generatePortraitAsync();
 
                 hasEncounterStarted = false; 
                 uiChatHistory.clear();
@@ -253,8 +259,8 @@ void GameManager::checkAsyncTasks() {
                 playerImageLoader.Free(); // 清空老头像
                 
                 // 只有成功了才去请求生图 API
-                isGeneratingPlayerPortrait = true;
-                futurePlayerPortrait = mainPlayer.generatePortraitAsync();
+                //isGeneratingPlayerPortrait = true;
+                //futurePlayerPortrait = mainPlayer.generatePortraitAsync();
                 // ===============================================
 
                 uiChatHistory.clear();
@@ -363,6 +369,7 @@ void GameManager::checkAsyncTasks() {
             }
         }
     }
+    cleanFinishedTasks();
 }
 
 void GameManager::drawChatBubble(const std::string& name, const std::string& text, int type, ImTextureID avatar_tex){
@@ -811,6 +818,16 @@ void GameManager::renderUI() {
             ImGui::Image((void*)(intptr_t)playerImageLoader.getTextureID(), ImVec2(pRenderWidth, pLeftHeight));
         } else {
             ImGui::TextDisabled("\n\n\n  暂无主角立绘");
+            
+            // 【新增】：当主角设定已经存在时，显示手动生图按钮
+            if (mainPlayer.getName() != "主角" || mainPlayer.getBackstory() != "一个随处可见的普通学生。") {
+                ImGui::Spacing();
+                ImGui::SetCursorPosX((200.0f - 120.0f) * 0.5f); // 居中计算 (左侧固定宽度200)
+                if (ImGui::Button("生成主角立绘", ImVec2(120, 30))) {
+                    isGeneratingPlayerPortrait = true;
+                    futurePlayerPortrait = mainPlayer.generatePortraitAsync();
+                }
+            }
         }
 
         ImGui::NextColumn();
@@ -952,6 +969,16 @@ void GameManager::renderUI() {
             ImGui::Image((void*)(intptr_t)npcImageLoader.getTextureID(), ImVec2(nRenderWidth, nLeftHeight));
         } else {
             ImGui::TextDisabled("\n\n\n  暂无角色立绘");
+            
+            // 【新增】：当NPC设定已经生成完毕时，显示手动生图按钮
+            if (currentNPC.is_generated && activeNPC != nullptr) {
+                ImGui::Spacing();
+                ImGui::SetCursorPosX((200.0f - 120.0f) * 0.5f); // 居中计算
+                if (ImGui::Button("生成角色立绘", ImVec2(120, 30))) {
+                    isGeneratingPortrait = true;
+                    futurePortrait = activeNPC->generatePortraitAsync();
+                }
+            }
         }
 
         ImGui::NextColumn();
@@ -1281,4 +1308,22 @@ bool GameManager::loadGame(const std::string& filename) {
     }
 
     return true;
+}
+
+void GameManager::addBackgroundTask(std::future<void>&& task) {
+    backgroundTasks.push_back(std::move(task));
+}
+
+void GameManager::cleanFinishedTasks() {
+    if (backgroundTasks.empty()) return;
+
+    // 使用 std::remove_if 配合 wait_for 检查任务状态
+    backgroundTasks.erase(
+        std::remove_if(backgroundTasks.begin(), backgroundTasks.end(),
+            [](const std::future<void>& f) {
+                // 如果任务已经就绪，返回 true 以便删除
+                return f.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+            }),
+        backgroundTasks.end()
+    );
 }

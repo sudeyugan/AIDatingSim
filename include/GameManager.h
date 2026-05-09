@@ -4,6 +4,7 @@
 #include <memory>
 #include <future>
 #include <chrono>
+#include <algorithm>
 
 #include "Player.h"
 #include "NPC.h"
@@ -25,6 +26,12 @@ private:
     TimeOfDay currentTime = TimeOfDay::MORNING;
 
     void advanceTime();
+
+    // 用于存放后台异步任务的容器
+    std::vector<std::future<void>> backgroundTasks;
+
+    // 清理已完成任务的私有方法
+    void cleanFinishedTasks();
 
     int chatTurns = 0; // 聊天回合计数器，用于控制时间流逝
 
@@ -105,4 +112,8 @@ public:
     bool saveGame(const std::string& filename);
     bool loadGame(const std::string& filename);
     void startAITask(std::shared_ptr<NPC> npc, std::future<bool> task);
+
+    // 提供一个接口供其他组件（如 NPC）添加异步任务
+    void addBackgroundTask(std::future<void>&& task);
+
 };

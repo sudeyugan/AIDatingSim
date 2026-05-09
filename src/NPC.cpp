@@ -44,8 +44,12 @@ std::string NPC::generateDynamicSystemPrompt(const Player& player) const {
         "设定：" + basePersona + "\n"
         "当前对玩家的好感度：" + std::to_string(affection) + "/100\n\n"
         "【与你对话的人】\n"
-        "名字：" + player.getName() + "，他的背景是：" + player.getBackstory() + "\n\n"
-        "【扮演准则】\n"
+        "名字：" + player.getName() + "，他的背景是：" + player.getBackstory() + "\n\n";
+    
+    if (!memorySummary.empty()) {
+        prompt += "【你们之前的记忆总结】（请牢记这些发生过的事）\n" + memorySummary + "\n\n";
+    }    
+    prompt += "【扮演准则】\n"
         "1. 你的说话口吻、用词习惯必须绝对符合你的设定。\n"
         "2. 如果你的设定是高中生，请像一个真实的、有血有肉的女高中生一样说话。绝对不要像客服一样刻板，可以使用年轻人的语气词（如：哎、呢、嘛、哦、笨蛋）。\n"
         "3. 玩家的回复可能会采取具体的“【行动】”。当玩家采取行动时，你需要根据你的性格做出真实的反应。\n"
@@ -73,6 +77,68 @@ std::string NPC::generateDynamicSystemPrompt(const Player& player) const {
         "- ready_to_transition: 默认为 false。如果你觉得当前话题已经自然结束、或者到了该道别、换个地方的时候，请设为 true。";
         "- affection_change: 好感度变化值，严格限制在 -5 到 +5 之间。";
     return prompt;
+}
+
+size_t NPC::getChatHistorySize() const {
+    return chatHistory.size();
+}
+
+void NPC::compressMemory(const Player& player) {
+    const int triggerSize = 30; 
+    // 每次压缩最旧的 20 条，保留最近的 10 条作为短期记忆
+    int extractCount = 20; 
+    if (chatHistory.size() < triggerSize) return;
+
+    std::string historyText = "";
+    for (int i = 0; i < extractCount; ++i) {
+        historyText += chatHistory[i]["role"].get<std::string>() + ": " + 
+                       chatHistory[i]["content"].get<std::string>() + "\n";
+    }
+
+    std::string summarizePrompt = 
+        "你是一个恋爱游戏引擎的后台记忆处理器。\n"
+        "请将【旧的记忆总结】与【刚刚发生的对话记录】融合，提取出：\n"
+        "1. 重要的剧情进展或事件。\n"
+        "2. 玩家透露的个人信息（喜好、承诺等）。\n"
+        "3. NPC（" + name + "）对玩家的情感变化。\n"
+        "请用第三人称客观陈述，极度精炼，总字数严格控制在 150 字以内！不要任何废话。\n\n"
+        "【旧的记忆总结】：\n" + (memorySummary.empty() ? "无" : memorySummary) + "\n\n"
+        "【刚刚发生的对话】：\n" + historyText;
+
+    // 构建请求
+    json requestBody = {
+        {"model", "deepseek-v4-pro"}, 
+        {"messages", json::array({{{"role", "user"}, {"content", summarizePrompt}}})},
+        {"temperature", 0.3} // 总结任务温度调低，保证客观准确
+    };
+
+    std::string apiKey = ConfigManager::getInstance().getApiKey();
+    httplib::Client cli("https://api.deepseek.com");
+    httplib::Headers headers = {
+        {"Authorization", "Bearer " + apiKey},
+        {"Content-Type", "application/json"}
+    };
+    cli.set_read_timeout(30, 0);
+
+    auto res = cli.Post("/v1/chat/completions", headers, requestBody.dump(), "application/json");
+    
+    if (res && res->status == 200) {
+        try {
+            json resJson = json::parse(res->body);
+            // 更新长期记忆
+            memorySummary = resJson["choices"][0]["message"]["content"].get<std::string>();
+            std::cout << "[System] 记忆压缩完成: " << memorySummary << std::endl;
+
+            // 成功生成摘要后，再把旧记录从队列里删掉
+            for (int i = 0; i < extractCount; ++i) {
+                chatHistory.pop_front();
+            }
+        } catch (...) {
+            std::cerr << "[Warning] 记忆总结解析失败，本次暂不清理历史。" << std::endl;
+        }
+    } else {
+        std::cerr << "[Warning] 记忆总结网络请求失败，本次暂不清理历史。" << std::endl;
+    }
 }
 
 void NPC::injectSceneMemory(const std::string& sceneDescription) {
@@ -103,15 +169,6 @@ NPCResponse NPC::interact(const std::string& playerInput, const Player& player) 
 
     // 1.3 压入玩家本次输入
     messages.push_back({{"role", "user"}, {"content", playerInput}});
-    
-    json requestBody = {
-        {"model", "deepseek-v4-pro"},
-        {"messages", messages},
-        {"temperature", 0.85},
-        {"response_format", {{"type", "json_object"}}}
-    };
-
-    std::string bodyStr = requestBody.dump();
 
     // 发起 HTTP 请求...
     std::string apiKey = ConfigManager::getInstance().getApiKey();
@@ -134,15 +191,13 @@ NPCResponse NPC::interact(const std::string& playerInput, const Player& player) 
 
         json requestBody = {
             {"model", "deepseek-v4-pro"},
-            {"messages", messages},
+            {"messages", currentMessages},
             {"temperature", 0.85},
             {"response_format", {{"type", "json_object"}}},
         };
 
-        std::string bodyStr = requestBody.dump();
-
         cli.set_read_timeout(30, 0); 
-        auto res = cli.Post("/v1/chat/completions", headers, bodyStr, "application/json");
+        auto res = cli.Post("/v1/chat/completions", headers, requestBody.dump(), "application/json");
         // 3. 解析返回结果
         if (res && res->status == 200) {
             std::string aiContentStr = ""; 
@@ -176,31 +231,17 @@ NPCResponse NPC::interact(const std::string& playerInput, const Player& player) 
                 bool triggerEvent = aiResult.value("trigger_event", false);
                 bool readyToTransition = aiResult.value("ready_to_transition", false); 
 
-                std::vector<std::string> insights;
-                if (aiResult.contains("passive_insights") && aiResult["passive_insights"].is_array()) {
-                    for (const auto& insight : aiResult["passive_insights"]) {
-                        insights.push_back(insight.get<std::string>());
-                    }
-                }
-
-                // 只有成功解析，才能将本次对话存入历史记录
                 chatHistory.push_back({{"role", "user"}, {"content", playerInput}});
-
-                json aiMemoryJson = {
-                    {"reply", reply},
-                    {"trigger_event", triggerEvent},
-                    {"ready_to_transition", readyToTransition},
-                    {"affection_change", affectionChange}
-                };
-                chatHistory.push_back({{"role", "assistant"}, {"content", aiMemoryJson.dump()}}); 
-
-                while (chatHistory.size() > MAX_HISTORY) {
-                    chatHistory.pop_front();
-                }
+                chatHistory.push_back({{"role", "assistant"}, {"content", reply}});
 
                 // 修改实际的好感度并打印日志
                 if (affectionChange != 0) {
                     changeAffection(affectionChange);
+                }
+
+                std::vector<std::string> insights;
+                if (aiResult.contains("passive_insights") && aiResult["passive_insights"].is_array()) {
+                    for (const auto& item : aiResult["passive_insights"]) insights.push_back(item.get<std::string>());
                 }
 
                 // 将解析出来的所有变量打包并返回
@@ -332,7 +373,8 @@ nlohmann::json NPC::toJson() const {
         {"basePersona", basePersona},
         {"affection", affection},
         {"portraitPath", portraitPath},
-        {"chatHistory", chatHistory} // nlohmann::json 会自动处理 STL 容器嵌套 JSON
+        {"chatHistory", chatHistory}, // nlohmann::json 会自动处理 STL 容器嵌套 JSON
+        {"memorySummary", memorySummary}
     };
 }
 
@@ -345,6 +387,7 @@ void NPC::fromJson(const nlohmann::json& j) {
     if (j.contains("chatHistory")) {
         chatHistory = j["chatHistory"].get<std::deque<nlohmann::json>>();
     }
+    memorySummary = j.value("memorySummary", "");
 }
 
 void NPC::reloadTexture() {

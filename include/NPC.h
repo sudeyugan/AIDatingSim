@@ -26,6 +26,7 @@ private:
     const size_t MAX_HISTORY = 40;
     std::string portraitPath;        
     ImageLoader portraitImage;
+    std::string memorySummary = "";
 
 public:
     NPC(std::string n, std::string persona, int initAffection = 0);
@@ -53,5 +54,9 @@ public:
     ImageLoader& getPortraitImage() { return portraitImage; }
     std::string getPortraitPath() const { return portraitPath; }
 
+    void compressMemory(const Player& player);
+
     void reloadTexture();
+
+    size_t getChatHistorySize() const;
 };
